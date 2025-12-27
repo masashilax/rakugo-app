@@ -3,28 +3,29 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="落語鑑賞録">
     <title>落語鑑賞録</title>
-    <!-- Tailwind CSS (デザイン用) -->
+    
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- React & ReactDOM (アプリの仕組み用) -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <!-- Babel (コード翻訳用) -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; -webkit-tap-highlight-color: transparent; }
-        /* iOS用のスタイル調整 */
-        input, textarea { font-size: 16px !important; } /* ズーム防止 */
+        body { font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif; -webkit-tap-highlight-color: transparent; }
+        input, textarea { font-size: 16px !important; }
+        body { background-color: #f7f3e8; }
     </style>
 </head>
-<body class="bg-[#f7f3e8] text-[#2c2c2c]">
+<body class="bg-[#f7f3e8] text-[#2c2c2c] select-none">
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect, useMemo, useRef } = React;
 
-        // --- アイコンコンポーネント (Lucideの代わり) ---
+        // --- アイコン ---
         const Icon = ({ path, size = 24, className = "" }) => (
             <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} dangerouslySetInnerHTML={{ __html: path }} />
         );
@@ -44,391 +45,334 @@
             ChevronRight: (p) => <Icon {...p} path='<path d="m9 18 6-6-6-6"/>' />,
             HelpCircle: (p) => <Icon {...p} path='<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>' />,
             Share: (p) => <Icon {...p} path='<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" x2="12" y1="2" y2="15"/>' />,
+            Camera: (p) => <Icon {...p} path='<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>' />,
+            Image: (p) => <Icon {...p} path='<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>' />,
         };
 
-        // --- メインアプリ ---
-        function RakugoApp() {
-            // LocalStorageからデータを読み込む初期化関数
-            const loadLogs = () => {
-                const saved = localStorage.getItem('rakugo_logs');
-                return saved ? JSON.parse(saved) : [];
-            };
+        // 画像圧縮関数
+        const compressImage = (file) => {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = document.createElement("img");
+                    img.onload = () => {
+                        const canvas = document.createElement("canvas");
+                        const ctx = canvas.getContext("2d");
+                        const MAX_WIDTH = 800; // 長辺の最大サイズ
+                        const MAX_HEIGHT = 800;
+                        let width = img.width;
+                        let height = img.height;
 
-            const [logs, setLogs] = useState(loadLogs);
+                        if (width > height) {
+                            if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
+                        } else {
+                            if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; }
+                        }
+                        canvas.width = width;
+                        canvas.height = height;
+                        ctx.drawImage(img, 0, 0, width, height);
+                        resolve(canvas.toDataURL("image/jpeg", 0.6)); // JPEG品質0.6
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        };
+
+        // --- アプリ本体 ---
+        function RakugoApp() {
+            const [logs, setLogs] = useState(() => {
+                try {
+                    const saved = localStorage.getItem('rakugo_logs');
+                    return saved ? JSON.parse(saved) : [];
+                } catch (e) { return []; }
+            });
+            
             const [isModalOpen, setIsModalOpen] = useState(false);
             const [isCalendarOpen, setIsCalendarOpen] = useState(false);
             const [isHelpOpen, setIsHelpOpen] = useState(false);
             const [calendarViewDate, setCalendarViewDate] = useState(new Date());
             const [editingLog, setEditingLog] = useState(null);
-
-            // フォームの状態
+            
+            // 入力フォーム
             const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
             const [venue, setVenue] = useState('');
             const [lineup, setLineup] = useState([{ performer: '', story: '' }]);
             const [notes, setNotes] = useState('');
+            const [images, setImages] = useState([]); // 画像データ配列(Base64)
+            
+            const fileInputRef = useRef(null);
 
-            // ログが更新されたらLocalStorageに保存
             useEffect(() => {
                 localStorage.setItem('rakugo_logs', JSON.stringify(logs));
             }, [logs]);
 
-            // 入力補佐用のデータ生成
             const uniquePerformers = useMemo(() => {
                 const names = new Set();
                 logs.forEach(log => {
-                    if (log.lineup) {
-                        log.lineup.forEach(item => { if (item.performer) names.add(item.performer); });
-                    } else if (log.performer) {
-                        names.add(log.performer);
-                    }
+                    if (log.lineup) log.lineup.forEach(item => { if(item.performer) names.add(item.performer); });
+                    else if (log.performer) names.add(log.performer);
                 });
                 return Array.from(names).sort();
             }, [logs]);
 
             const uniqueVenues = useMemo(() => {
                 const venues = new Set();
-                logs.forEach(log => { if (log.venue) venues.add(log.venue); });
+                logs.forEach(log => { if(log.venue) venues.add(log.venue); });
                 return Array.from(venues).sort();
             }, [logs]);
 
-            // 統計データの生成
             const stats = useMemo(() => {
                 const now = new Date();
                 const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
                 const currentYear = today.getFullYear();
                 const currentMonth = today.getMonth();
-
-                const dayOfWeek = today.getDay();
-                const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+                const day = today.getDay();
+                const diff = day === 0 ? 6 : day - 1; 
                 const startOfWeek = new Date(today);
-                startOfWeek.setDate(today.getDate() - daysToMonday);
+                startOfWeek.setDate(today.getDate() - diff);
                 const endOfWeek = new Date(startOfWeek);
                 endOfWeek.setDate(startOfWeek.getDate() + 7);
 
-                let weekCount = 0;
-                let monthCount = 0;
-
-                const parseDate = (dateStr) => {
-                    if (!dateStr) return new Date(0);
-                    const [y, m, d] = dateStr.split('-').map(Number);
-                    return new Date(y, m - 1, d);
-                };
-
+                let week = 0, month = 0;
                 logs.forEach(log => {
-                    const logDate = parseDate(log.date);
-                    if (logDate.getFullYear() === currentYear && logDate.getMonth() === currentMonth) monthCount++;
-                    if (logDate >= startOfWeek && logDate < endOfWeek) weekCount++;
+                    if (!log.date) return;
+                    const [y, m, dt] = log.date.split('-').map(Number);
+                    const logDate = new Date(y, m-1, dt);
+                    if (logDate.getFullYear() === currentYear && logDate.getMonth() === currentMonth) month++;
+                    if (logDate >= startOfWeek && logDate < endOfWeek) week++;
                 });
-
-                return { weekCount, monthCount };
+                return { week, month };
             }, [logs]);
 
-            // ハンドラー関数
-            const resetForm = () => {
-                setDate(new Date().toISOString().split('T')[0]);
-                setVenue('');
-                setLineup([{ performer: '', story: '' }]);
-                setNotes('');
-                setEditingLog(null);
-            };
-
-            const openModal = (log) => {
+            const openModal = (log = null) => {
                 if (log) {
                     setEditingLog(log);
                     setDate(log.date);
                     setVenue(log.venue);
                     setNotes(log.notes);
-                    if (log.lineup && log.lineup.length > 0) {
-                        setLineup(log.lineup);
-                    } else {
-                        setLineup([{ performer: log.performer || '', story: log.story || '' }]);
+                    // 画像の読み込み（旧データ互換性対応）
+                    let initialImages = [];
+                    if (log.images && Array.isArray(log.images)) {
+                        initialImages = log.images;
+                    } else if (log.image) {
+                        initialImages = [log.image];
                     }
+                    setImages(initialImages);
+                    setLineup(log.lineup && log.lineup.length ? log.lineup : [{ performer: log.performer || '', story: log.story || '' }]);
                 } else {
-                    resetForm();
+                    setEditingLog(null);
+                    setDate(new Date().toISOString().split('T')[0]);
+                    setVenue('');
+                    setLineup([{ performer: '', story: '' }]);
+                    setNotes('');
+                    setImages([]);
                 }
                 setIsModalOpen(true);
             };
 
-            const closeModal = () => {
-                setIsModalOpen(false);
-                resetForm();
+            const handleImageSelect = async (e) => {
+                if (images.length >= 3) {
+                    alert("写真は3枚まで登録できます");
+                    return;
+                }
+                const file = e.target.files[0];
+                if (file) {
+                    const compressed = await compressImage(file);
+                    setImages([...images, compressed]);
+                }
+                e.target.value = null; // 同じファイルを再度選択できるようにリセット
             };
 
-            const updateLineupItem = (index, field, value) => {
-                const newLineup = [...lineup];
-                newLineup[index][field] = value;
-                setLineup(newLineup);
-            };
-
-            const addLineupItem = () => {
-                setLineup([...lineup, { performer: '', story: '' }]);
-            };
-
-            const removeLineupItem = (index) => {
-                if (lineup.length === 1) return;
-                const newLineup = lineup.filter((_, i) => i !== index);
-                setLineup(newLineup);
+            const handleRemoveImage = (index) => {
+                if(confirm("この写真を削除しますか？")) {
+                    setImages(images.filter((_, i) => i !== index));
+                }
             };
 
             const handleSave = (e) => {
                 e.preventDefault();
-                const cleanLineup = lineup.filter(item => item.performer.trim() || item.story.trim());
-                const finalLineup = cleanLineup.length > 0 ? cleanLineup : [{ performer: '', story: '' }];
-                const mainItem = finalLineup[finalLineup.length - 1];
-
-                const logData = {
+                const cleanLineup = lineup.filter(i => i.performer.trim() || i.story.trim());
+                const finalLineup = cleanLineup.length ? cleanLineup : [{performer:'', story:''}];
+                
+                const newLog = {
                     id: editingLog ? editingLog.id : Date.now().toString(),
                     date,
                     venue,
                     lineup: finalLineup,
-                    performer: mainItem.performer,
-                    story: mainItem.story,
+                    performer: finalLineup[finalLineup.length-1].performer, 
+                    story: finalLineup[finalLineup.length-1].story,
                     notes,
-                    createdAt: editingLog ? editingLog.createdAt : new Date().toISOString(),
+                    images: images, // 画像配列保存
+                    image: images[0] || null, // 互換性のため1枚目をimageにも入れておく
+                    createdAt: editingLog ? editingLog.createdAt : new Date().toISOString()
                 };
 
+                // ローカル保存のみ
                 if (editingLog) {
-                    setLogs(logs.map(log => log.id === editingLog.id ? logData : log).sort((a, b) => new Date(b.date) - new Date(a.date)));
+                    setLogs(logs.map(l => l.id === editingLog.id ? newLog : l).sort((a,b) => new Date(b.date) - new Date(a.date)));
                 } else {
-                    setLogs([logData, ...logs].sort((a, b) => new Date(b.date) - new Date(a.date)));
+                    setLogs([newLog, ...logs].sort((a,b) => new Date(b.date) - new Date(a.date)));
                 }
-                closeModal();
+
+                setIsModalOpen(false);
             };
 
             const handleDelete = (id, e) => {
                 e.stopPropagation();
-                if (!confirm('この記録を削除してもよろしいですか？')) return;
-                setLogs(logs.filter(log => log.id !== id));
-            };
-
-            // カレンダー関連
-            const changeCalendarMonth = (offset) => {
-                const newDate = new Date(calendarViewDate);
-                newDate.setMonth(newDate.getMonth() + offset);
-                setCalendarViewDate(newDate);
-            };
-
-            const renderCalendarDays = () => {
-                const year = calendarViewDate.getFullYear();
-                const month = calendarViewDate.getMonth();
-                const daysInMonth = new Date(year, month + 1, 0).getDate();
-                const firstDay = new Date(year, month, 1).getDay();
-
-                const days = [];
-                for (let i = 0; i < firstDay; i++) {
-                    days.push(<div key={`pad-${i}`} className="h-10 w-10"></div>);
-                }
-                
-                for (let d = 1; d <= daysInMonth; d++) {
-                    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-                    const hasLog = logs.some(log => log.date === dateStr);
-                    const isToday = new Date().toDateString() === new Date(year, month, d).toDateString();
-                    
-                    days.push(
-                        <div key={d} className={`h-10 w-10 flex flex-col items-center justify-center rounded-full relative ${isToday ? 'bg-[#2d4059] text-white' : 'text-gray-700 hover:bg-gray-100'}`}>
-                            <span className={`text-sm ${isToday ? 'font-bold' : ''}`}>{d}</span>
-                            {hasLog && (
-                                <div className={`absolute bottom-1 w-1.5 h-1.5 rounded-full ${isToday ? 'bg-red-400' : 'bg-[#c84b31]'}`}></div>
-                            )}
-                        </div>
-                    );
-                }
-                return days;
+                if(confirm('削除しますか？')) setLogs(logs.filter(l => l.id !== id));
             };
 
             return (
-                <div className="min-h-screen pb-24">
-                    {/* Header */}
+                <div className="min-h-screen pb-24 max-w-md mx-auto bg-[#f7f3e8] shadow-2xl min-h-screen">
                     <header className="bg-[#2d4059] text-white p-4 sticky top-0 z-10 shadow-md">
-                        <div className="max-w-md mx-auto">
-                            <div className="flex items-center justify-between mb-3">
-                                <h1 className="text-xl font-bold tracking-widest font-serif flex items-center gap-2">
-                                    <span className="bg-red-600 text-white px-2 py-0.5 text-sm rounded-sm">寄席</span>
-                                    落語鑑賞録
-                                </h1>
-                                <div className="flex items-center gap-3">
-                                    <div className="text-sm font-bold text-[#eecda3] flex items-center gap-1">
-                                        <Icons.BookOpen size={14} />
-                                        全{logs.length}席
-                                    </div>
-                                    <button onClick={() => setIsHelpOpen(true)} className="text-white/70 hover:text-white">
-                                        <Icons.HelpCircle size={20} />
-                                    </button>
-                                </div>
+                        <div className="flex justify-between items-center mb-3">
+                            <h1 className="text-xl font-bold font-serif flex items-center gap-2">
+                                <span className="bg-red-600 px-2 py-0.5 text-sm rounded-sm">寄席</span> 落語鑑賞録
+                            </h1>
+                            <div className="flex gap-3">
+                                <div className="text-sm font-bold text-[#eecda3] flex items-center gap-1"><Icons.BookOpen size={14}/> {logs.length}席</div>
+                                <button onClick={() => setIsHelpOpen(true)} className="text-white/70 hover:text-white"><Icons.HelpCircle size={20}/></button>
                             </div>
-                            
-                            <div className="flex gap-3 text-xs">
-                                <button onClick={() => setIsCalendarOpen(true)} className="bg-[#1e2b3c] px-3 py-2 rounded flex items-center justify-between flex-1 border border-white/10 shadow-inner hover:bg-[#2c3e56] transition-colors cursor-pointer">
-                                    <span className="text-gray-400 flex items-center gap-1"><Icons.Calendar size={12} /> 今週</span>
-                                    <span className="text-white font-bold text-lg">{stats.weekCount}<span className="text-xs font-normal text-gray-400 ml-0.5">席</span></span>
-                                </button>
-                                <button onClick={() => setIsCalendarOpen(true)} className="bg-[#1e2b3c] px-3 py-2 rounded flex items-center justify-between flex-1 border border-white/10 shadow-inner hover:bg-[#2c3e56] transition-colors cursor-pointer">
-                                    <span className="text-gray-400 flex items-center gap-1"><Icons.TrendingUp size={12} /> 今月</span>
-                                    <span className="text-white font-bold text-lg">{stats.monthCount}<span className="text-xs font-normal text-gray-400 ml-0.5">席</span></span>
-                                </button>
-                            </div>
+                        </div>
+                        <div className="flex gap-3 text-xs">
+                            <button onClick={() => setIsCalendarOpen(true)} className="bg-[#1e2b3c] flex-1 py-2 px-3 rounded flex justify-between items-center border border-white/10 hover:bg-[#3d4d65]">
+                                <span className="text-gray-400 flex gap-1 items-center"><Icons.Calendar size={12}/> 今週</span>
+                                <span className="font-bold text-lg">{stats.week}<span className="text-xs font-normal ml-0.5">席</span></span>
+                            </button>
+                            <button onClick={() => setIsCalendarOpen(true)} className="bg-[#1e2b3c] flex-1 py-2 px-3 rounded flex justify-between items-center border border-white/10 hover:bg-[#3d4d65]">
+                                <span className="text-gray-400 flex gap-1 items-center"><Icons.TrendingUp size={12}/> 今月</span>
+                                <span className="font-bold text-lg">{stats.month}<span className="text-xs font-normal ml-0.5">席</span></span>
+                            </button>
                         </div>
                     </header>
 
-                    {/* Main Content */}
-                    <main className="max-w-md mx-auto p-4 space-y-4">
+                    <main className="p-4 space-y-4">
                         {logs.length === 0 ? (
-                            <div className="text-center py-20 opacity-60">
+                            <div className="text-center py-20 opacity-50">
                                 <div className="text-6xl mb-4">🎭</div>
-                                <p className="text-lg font-bold mb-2">記録がまだありません</p>
-                                <p className="text-sm">右下のボタンから<br/>最初の寄席を記録しましょう</p>
+                                <p className="font-bold">まだ記録がありません</p>
+                                <p className="text-sm mt-2">右下のボタンから<br/>最初の寄席を追加してください</p>
                             </div>
                         ) : (
-                            logs.map((log) => {
-                                const displayItems = log.lineup && log.lineup.length > 0 ? log.lineup : [{ performer: log.performer || '', story: log.story || '' }];
-                                return (
-                                    <div key={log.id} onClick={() => openModal(log)} className="bg-white rounded-lg shadow-sm border-l-4 border-[#c84b31] p-4 relative cursor-pointer hover:shadow-md transition-shadow group">
-                                        <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button onClick={(e) => handleDelete(log.id, e)} className="p-2 text-gray-400 hover:text-red-500 bg-gray-50 rounded-full"><Icons.Trash2 size={16} /></button>
-                                        </div>
-                                        <div className="flex items-center text-xs text-gray-500 mb-3 font-mono">
-                                            <Icons.Calendar size={12} className="mr-1" />{log.date.replace(/-/g, '.')}
-                                            <span className="mx-2">|</span>
-                                            <Icons.MapPin size={12} className="mr-1" />{log.venue || '場所未定'}
-                                        </div>
-                                        <div className="space-y-3 mb-3">
-                                            {displayItems.map((item, idx) => (
-                                                <div key={idx} className="flex flex-col">
-                                                    <h3 className="text-lg font-bold text-[#2d4059] leading-tight">{item.story || '演目なし'}</h3>
-                                                    <div className="flex items-center text-[#c84b31] font-medium text-sm mt-0.5">
-                                                        <Icons.User size={14} className="mr-1" />{item.performer || '演者なし'}
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                        {log.notes && <div className="bg-[#fcfaf5] p-2 rounded text-sm text-gray-600 leading-relaxed border border-[#eecda3]/30 mt-2">{log.notes}</div>}
+                            logs.map(log => (
+                                <div key={log.id} onClick={() => openModal(log)} className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-[#c84b31] relative hover:shadow-md transition-shadow">
+                                    <button onClick={(e) => handleDelete(log.id, e)} className="absolute top-2 right-2 p-2 text-gray-300 hover:text-red-500"><Icons.Trash2 size={16}/></button>
+                                    <div className="text-xs text-gray-500 mb-2 font-mono flex items-center gap-2">
+                                        <span className="flex items-center gap-1"><Icons.Calendar size={12}/> {log.date.replace(/-/g, '.')}</span>
+                                        <span className="text-gray-300">|</span>
+                                        <span className="flex items-center gap-1"><Icons.MapPin size={12}/> {log.venue || '未定'}</span>
+                                        {/* 写真がある場合はアイコンを表示 */}
+                                        {(log.images?.length > 0 || log.image) && <span className="text-gray-400 ml-auto flex items-center gap-1"><Icons.Image size={14}/> {log.images?.length > 1 ? log.images.length : ''}</span>}
                                     </div>
-                                );
-                            })
+                                    <div className="space-y-2 mb-2">
+                                        {(log.lineup && log.lineup.length ? log.lineup : [{performer: log.performer, story: log.story}]).map((item, idx) => (
+                                            <div key={idx}>
+                                                <h3 className="text-lg font-bold text-[#2d4059]">{item.story || '演目なし'}</h3>
+                                                <div className="text-[#c84b31] text-sm font-bold flex items-center gap-1"><Icons.User size={14}/> {item.performer || '演者なし'}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {log.notes && <div className="bg-[#fcfaf5] p-2 text-sm text-gray-600 rounded border border-[#eecda3]/30">{log.notes}</div>}
+                                </div>
+                            ))
                         )}
                     </main>
 
-                    {/* FAB */}
-                    <button onClick={() => openModal()} className="fixed bottom-6 right-6 bg-[#c84b31] hover:bg-[#a63d28] text-white rounded-full p-4 shadow-lg transition-transform hover:scale-105 active:scale-95 z-20">
-                        <Icons.Plus size={28} />
-                    </button>
+                    <button onClick={() => openModal()} className="fixed bottom-6 right-6 bg-[#c84b31] text-white p-4 rounded-full shadow-lg hover:scale-105 transition-transform z-20"><Icons.Plus size={28}/></button>
 
-                    {/* Help Modal */}
-                    {isHelpOpen && (
-                        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
-                            <div className="bg-white w-full max-w-sm rounded-xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
-                                <div className="bg-[#2d4059] text-white p-4 flex justify-between items-center">
-                                    <h2 className="font-bold flex items-center gap-2"><Icons.Share size={18}/> アプリとして保存する</h2>
-                                    <button onClick={() => setIsHelpOpen(false)} className="hover:bg-white/10 p-1 rounded-full"><Icons.X size={20} /></button>
-                                </div>
-                                <div className="p-5 space-y-6 text-sm text-gray-700">
-                                    <p className="font-bold">このページをホーム画面に追加すると、アプリのように使えます。</p>
-                                    <div className="bg-gray-50 p-4 rounded-lg border border-gray-100">
-                                        <h3 className="font-bold text-[#2d4059] mb-2 flex items-center">🍎 iPhone (Safari) の場合</h3>
-                                        <ol className="list-decimal list-inside space-y-1 ml-1">
-                                            <li>画面下中央の<span className="font-bold">「共有ボタン」</span>（四角から上矢印）をタップ</li>
-                                            <li><span className="font-bold">「ホーム画面に追加」</span>を選択</li>
-                                            <li>「追加」をタップ</li>
-                                        </ol>
-                                    </div>
-                                    <div className="bg-gray-50 p-4 rounded-lg border border-gray-100">
-                                        <h3 className="font-bold text-[#2d4059] mb-2 flex items-center">🤖 Android (Chrome) の場合</h3>
-                                        <ol className="list-decimal list-inside space-y-1 ml-1">
-                                            <li>画面右上の<span className="font-bold">「メニュー」</span>（点3つ）をタップ</li>
-                                            <li><span className="font-bold">「ホーム画面に追加」</span>を選択</li>
-                                            <li>「追加」をタップ</li>
-                                        </ol>
-                                    </div>
-                                    <button onClick={() => setIsHelpOpen(false)} className="w-full bg-[#c84b31] text-white font-bold py-3 rounded-lg">閉じる</button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Calendar Modal */}
-                    {isCalendarOpen && (
-                        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
-                            <div className="bg-white w-full max-w-sm rounded-xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
-                                <div className="bg-[#2d4059] text-white p-4 flex justify-between items-center">
-                                    <h2 className="font-bold flex items-center gap-2"><Icons.Calendar size={18}/> 鑑賞カレンダー</h2>
-                                    <button onClick={() => setIsCalendarOpen(false)} className="hover:bg-white/10 p-1 rounded-full"><Icons.X size={20} /></button>
-                                </div>
-                                <div className="p-4">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <button onClick={() => changeCalendarMonth(-1)} className="p-2 hover:bg-gray-100 rounded-full"><Icons.ChevronLeft size={20} /></button>
-                                        <div className="font-bold text-lg">{calendarViewDate.getFullYear()}年 {calendarViewDate.getMonth() + 1}月</div>
-                                        <button onClick={() => changeCalendarMonth(1)} className="p-2 hover:bg-gray-100 rounded-full"><Icons.ChevronRight size={20} /></button>
-                                    </div>
-                                    <div className="grid grid-cols-7 gap-1 text-center text-xs font-bold text-gray-400 mb-2">
-                                        <div>日</div><div>月</div><div>火</div><div>水</div><div>木</div><div>金</div><div>土</div>
-                                    </div>
-                                    <div className="grid grid-cols-7 gap-1 justify-items-center">
-                                        {renderCalendarDays()}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Input Modal */}
                     {isModalOpen && (
-                        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
-                            <div className="bg-[#fcfaf5] w-full max-w-md rounded-xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
-                                <div className="bg-[#2d4059] text-white p-4 flex justify-between items-center shrink-0">
-                                    <h2 className="font-bold flex items-center gap-2">
-                                        {editingLog ? <Icons.Edit2 size={18}/> : <Icons.BookOpen size={18}/>}
-                                        {editingLog ? '記録を編集' : '新しい記録'}
-                                    </h2>
-                                    <button onClick={closeModal} className="hover:bg-white/10 p-1 rounded-full"><Icons.X size={20} /></button>
+                        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+                            <div className="bg-[#fcfaf5] w-full max-w-md rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                                <div className="bg-[#2d4059] text-white p-4 flex justify-between items-center">
+                                    <h2 className="font-bold flex gap-2 items-center">{editingLog ? <Icons.Edit2 size={18}/> : <Icons.BookOpen size={18}/>} {editingLog ? '編集' : '新規記録'}</h2>
+                                    <button onClick={() => setIsModalOpen(false)}><Icons.X size={20}/></button>
                                 </div>
-
-                                <form onSubmit={handleSave} className="p-5 overflow-y-auto flex-1 space-y-5">
+                                <form onSubmit={handleSave} className="p-4 overflow-y-auto flex-1 space-y-4">
                                     <div className="grid grid-cols-2 gap-4">
-                                        <div className="space-y-1">
-                                            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">日付</label>
-                                            <input type="date" required value={date} onChange={(e) => setDate(e.target.value)} className="w-full bg-white border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-[#c84b31] outline-none" />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">場所・寄席名</label>
-                                            <input type="text" placeholder="新宿末廣亭など" value={venue} list="venue-list" onChange={(e) => setVenue(e.target.value)} className="w-full bg-white border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-[#c84b31] outline-none" />
-                                            <datalist id="venue-list">{uniqueVenues.map((v) => <option key={v} value={v} />)}</datalist>
+                                        <div><label className="text-xs font-bold text-gray-500 block mb-1">日付</label><input type="date" required value={date} onChange={e=>setDate(e.target.value)} className="w-full p-2 rounded border border-gray-300"/></div>
+                                        <div>
+                                            <label className="text-xs font-bold text-gray-500 block mb-1">場所</label>
+                                            <input type="text" list="venues" value={venue} onChange={e=>setVenue(e.target.value)} placeholder="末廣亭など" className="w-full p-2 rounded border border-gray-300"/>
+                                            <datalist id="venues">{uniqueVenues.map(v=><option key={v} value={v}/>)}</datalist>
                                         </div>
                                     </div>
-
-                                    <div className="space-y-3">
-                                        <div className="flex items-center justify-between">
-                                            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">演目・演者リスト</label>
-                                            <span className="text-xs text-gray-400">上から順に表示</span>
-                                        </div>
-                                        <datalist id="performer-list">{uniquePerformers.map((name) => <option key={name} value={name} />)}</datalist>
-                                        {lineup.map((item, index) => (
-                                            <div key={index} className="flex gap-2 items-start bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between"><label className="text-xs font-bold text-gray-500">演目・演者</label><span className="text-xs text-gray-400">上から順</span></div>
+                                        <datalist id="performers">{uniquePerformers.map(p=><option key={p} value={p}/>)}</datalist>
+                                        {lineup.map((item, idx) => (
+                                            <div key={idx} className="flex gap-2 bg-white p-2 rounded border border-gray-200">
                                                 <div className="flex-1 space-y-2">
-                                                    <div className="relative">
-                                                        <Icons.BookOpen size={14} className="absolute left-2.5 top-2.5 text-gray-400" />
-                                                        <input type="text" required placeholder="演目（芝浜など）" value={item.story} onChange={(e) => updateLineupItem(index, 'story', e.target.value)} className="w-full bg-gray-50 border-0 border-b border-gray-200 rounded-t p-2 pl-8 focus:ring-0 focus:border-[#c84b31] outline-none font-bold text-gray-800 placeholder-gray-300 text-base" />
-                                                    </div>
-                                                    <div className="relative">
-                                                        <Icons.User size={14} className="absolute left-2.5 top-2.5 text-gray-400" />
-                                                        <input type="text" placeholder="演者名（補佐あり）" value={item.performer} list="performer-list" onChange={(e) => updateLineupItem(index, 'performer', e.target.value)} className="w-full bg-gray-50 border-0 border-t border-transparent p-2 pl-8 focus:ring-0 outline-none text-sm text-gray-600 placeholder-gray-300" />
-                                                    </div>
+                                                    <input placeholder="演目 (芝浜)" value={item.story} onChange={e=>{const n=[...lineup];n[idx].story=e.target.value;setLineup(n)}} className="w-full p-1 border-b font-bold"/>
+                                                    <input placeholder="演者" list="performers" value={item.performer} onChange={e=>{const n=[...lineup];n[idx].performer=e.target.value;setLineup(n)}} className="w-full p-1 text-sm"/>
                                                 </div>
-                                                {lineup.length > 1 && (
-                                                    <button type="button" onClick={() => removeLineupItem(index)} className="mt-2 text-gray-300 hover:text-red-500 p-1"><Icons.MinusCircle size={20} /></button>
-                                                )}
+                                                {lineup.length>1 && <button type="button" onClick={()=>{setLineup(lineup.filter((_,i)=>i!==idx))}} className="text-gray-300"><Icons.MinusCircle/></button>}
                                             </div>
                                         ))}
-                                        <button type="button" onClick={addLineupItem} className="w-full py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-[#c84b31] hover:text-[#c84b31] text-sm font-bold transition-colors flex items-center justify-center gap-2"><Icons.Plus size={16} />演者を追加</button>
+                                        <button type="button" onClick={()=>setLineup([...lineup,{performer:'',story:''}])} className="w-full py-2 border-2 border-dashed rounded text-gray-500 font-bold flex justify-center gap-2 text-sm"><Icons.Plus size={16}/> 追加</button>
+                                    </div>
+                                    <div><label className="text-xs font-bold text-gray-500 block mb-1">メモ</label><textarea rows={3} value={notes} onChange={e=>setNotes(e.target.value)} className="w-full p-2 rounded border border-gray-300"/></div>
+                                    
+                                    {/* 写真アップロードエリア */}
+                                    <div>
+                                        <label className="text-xs font-bold text-gray-500 block mb-1">写真 (最大3枚)</label>
+                                        <div className="space-y-2">
+                                            {/* 写真一覧 */}
+                                            {images.length > 0 && (
+                                                <div className="grid grid-cols-3 gap-2 mb-2">
+                                                    {images.map((img, idx) => (
+                                                        <div key={idx} className="relative aspect-square">
+                                                            <img src={img} alt={`記録写真${idx+1}`} className="w-full h-full object-cover rounded border border-gray-200" />
+                                                            <button type="button" onClick={() => handleRemoveImage(idx)} className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 shadow-md">
+                                                                <Icons.X size={12} />
+                                                            </button>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                            
+                                            {/* 追加ボタン (3枚未満のときのみ表示) */}
+                                            {images.length < 3 && (
+                                                <button type="button" onClick={() => fileInputRef.current.click()} className="w-full h-12 border-2 border-dashed border-gray-300 rounded flex items-center justify-center gap-2 text-gray-400 hover:bg-gray-50 text-sm">
+                                                    <Icons.Camera size={18} />
+                                                    <span>写真を追加 {images.length > 0 ? `(${images.length}/3)` : ''}</span>
+                                                </button>
+                                            )}
+                                            
+                                            <input type="file" ref={fileInputRef} onChange={handleImageSelect} accept="image/*" className="hidden" />
+                                        </div>
                                     </div>
 
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">感想・メモ</label>
-                                        <textarea rows={3} placeholder="全体の感想や、特筆すべきこと..." value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full bg-white border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-[#c84b31] outline-none resize-none" />
-                                    </div>
                                 </form>
-
-                                <div className="p-4 border-t border-gray-100 bg-gray-50 shrink-0">
-                                    <button onClick={handleSave} className="w-full bg-[#2d4059] hover:bg-[#1e2b3c] text-white font-bold py-3 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors shadow-md"><Icons.Save size={18} />{editingLog ? '更新する' : '記録する'}</button>
+                                <div className="p-4 bg-gray-50 border-t">
+                                    <button onClick={handleSave} className="w-full bg-[#2d4059] text-white font-bold py-3 rounded flex justify-center gap-2 items-center">
+                                        <Icons.Save size={18}/> 保存
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                    {isCalendarOpen && (
+                        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+                            <div className="bg-white w-full max-w-sm rounded-xl shadow-2xl overflow-hidden">
+                                <div className="bg-[#2d4059] text-white p-4 flex justify-between items-center"><h2 className="font-bold flex gap-2 items-center"><Icons.Calendar size={18}/> 鑑賞カレンダー</h2><button onClick={() => setIsCalendarOpen(false)}><Icons.X size={20}/></button></div>
+                                <div className="p-4">
+                                    <div className="flex justify-between items-center mb-4"><button onClick={()=>setCalendarViewDate(new Date(calendarViewDate.setMonth(calendarViewDate.getMonth()-1)))} className="p-2 bg-gray-100 rounded-full"><Icons.ChevronLeft/></button><span className="font-bold text-lg">{calendarViewDate.getFullYear()}年 {calendarViewDate.getMonth()+1}月</span><button onClick={()=>setCalendarViewDate(new Date(calendarViewDate.setMonth(calendarViewDate.getMonth()+1)))} className="p-2 bg-gray-100 rounded-full"><Icons.ChevronRight/></button></div>
+                                    <div className="grid grid-cols-7 text-center gap-1 mb-2 text-xs font-bold text-gray-400"><div>日</div><div>月</div><div>火</div><div>水</div><div>木</div><div>金</div><div>土</div></div>
+                                    <div className="grid grid-cols-7 text-center gap-1">{[...Array(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth(), 1).getDay())].map((_,i)=><div key={`p${i}`}/>)}{[...Array(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth()+1, 0).getDate())].map((_,i)=>{const d=i+1,y=calendarViewDate.getFullYear(),m=calendarViewDate.getMonth()+1,isToday=new Date().toDateString()===new Date(y,m-1,d).toDateString(),hasLog=logs.some(l=>l.date===`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`);return(<div key={d} className={`h-10 w-10 flex flex-col items-center justify-center rounded-full relative ${isToday?'bg-[#2d4059] text-white':'hover:bg-gray-100'}`}><span className={`text-sm ${isToday?'font-bold':''}`}>{d}</span>{hasLog && <div className={`w-1.5 h-1.5 rounded-full absolute bottom-1 ${isToday?'bg-red-400':'bg-[#c84b31]'}`}/>}</div>)})}</div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                    {isHelpOpen && (
+                        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+                            <div className="bg-white w-full max-w-sm rounded-xl overflow-hidden shadow-2xl">
+                                <div className="bg-[#2d4059] text-white p-4 flex justify-between items-center"><h2 className="font-bold flex gap-2"><Icons.Share size={18}/> アプリにする方法</h2><button onClick={()=>setIsHelpOpen(false)}><Icons.X/></button></div>
+                                <div className="p-6 space-y-4 text-sm text-gray-700">
+                                    <p className="font-bold">このページをホーム画面に追加すると、アプリとして使えます。</p>
+                                    <div className="bg-gray-100 p-4 rounded"><h3 className="font-bold text-[#2d4059] mb-1">🍎 iPhone (Safari)</h3><ol className="list-decimal ml-5 space-y-1"><li>下の「共有ボタン」<span className="text-xs border p-0.5">↑</span>をタップ</li><li>「ホーム画面に追加」を選択</li><li>「追加」をタップ</li></ol></div>
+                                    <div className="bg-gray-100 p-4 rounded"><h3 className="font-bold text-[#2d4059] mb-1">🤖 Android (Chrome)</h3><ol className="list-decimal ml-5 space-y-1"><li>右上の「メニュー」<span className="text-xs border p-0.5">︙</span>をタップ</li><li>「ホーム画面に追加」を選択</li><li>「追加」をタップ</li></ol></div>
+                                    <button onClick={()=>setIsHelpOpen(false)} className="w-full bg-[#c84b31] text-white font-bold py-3 rounded">閉じる</button>
                                 </div>
                             </div>
                         </div>
@@ -436,7 +380,6 @@
                 </div>
             );
         }
-
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<RakugoApp />);
     </script>
