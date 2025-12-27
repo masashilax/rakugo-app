@@ -395,7 +395,36 @@
                                 <div className="p-4">
                                     <div className="flex justify-between items-center mb-4"><button onClick={()=>setCalendarViewDate(new Date(calendarViewDate.setMonth(calendarViewDate.getMonth()-1)))} className="p-2 bg-gray-100 rounded-full"><Icons.ChevronLeft/></button><span className="font-bold text-lg">{calendarViewDate.getFullYear()}年 {calendarViewDate.getMonth()+1}月</span><button onClick={()=>setCalendarViewDate(new Date(calendarViewDate.setMonth(calendarViewDate.getMonth()+1)))} className="p-2 bg-gray-100 rounded-full"><Icons.ChevronRight/></button></div>
                                     <div className="grid grid-cols-7 text-center gap-1 mb-2 text-xs font-bold text-gray-400"><div>日</div><div>月</div><div>火</div><div>水</div><div>木</div><div>金</div><div>土</div></div>
-                                    <div className="grid grid-cols-7 text-center gap-1">{[...Array(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth(), 1).getDay())].map((_,i)=><div key={`p${i}`}/>)}{[...Array(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth()+1, 0).getDate())].map((_,i)=>{const d=i+1,y=calendarViewDate.getFullYear(),m=calendarViewDate.getMonth()+1,isToday=new Date().toDateString()===new Date(y,m-1,d).toDateString(),hasLog=logs.some(l=>l.date===`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`);return(<div key={d} className={`h-10 w-10 flex flex-col items-center justify-center rounded-full relative ${isToday?'bg-[#2d4059] text-white':'hover:bg-gray-100'}`}><span className={`text-sm ${isToday?'font-bold':''}`}>{d}</span>{hasLog && <div className={`w-1.5 h-1.5 rounded-full absolute bottom-1 ${isToday?'bg-red-400':'bg-[#c84b31]'}`}/>}</div>)})}</div>
+                                    <div className="grid grid-cols-7 text-center gap-1">
+                                        {[...Array(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth(), 1).getDay())].map((_,i)=><div key={`p${i}`}/>)}
+                                        {[...Array(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth()+1, 0).getDate())].map((_,i)=>{
+                                            const d=i+1;
+                                            const y=calendarViewDate.getFullYear(), m=calendarViewDate.getMonth()+1;
+                                            const dateStr = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+                                            const logCount = logs.filter(l=>l.date===dateStr).length;
+                                            const isToday = new Date().toDateString() === new Date(y,m-1,d).toDateString();
+                                            return (
+                                                <div key={d} className={`h-10 w-10 flex flex-col items-center justify-center rounded-full relative ${isToday?'bg-[#2d4059] text-white':'hover:bg-gray-100'}`}>
+                                                    <span className={`text-sm ${isToday?'font-bold':''}`}>{d}</span>
+                                                    {logCount > 0 && (
+                                                        <>
+                                                            {logCount > 1 ? (
+                                                                <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[9px] flex items-center justify-center rounded-full border border-white">
+                                                                    {logCount}
+                                                                </span>
+                                                            ) : (
+                                                                <div className={`w-1.5 h-1.5 rounded-full absolute bottom-1 ${isToday?'bg-red-400':'bg-[#c84b31]'}`}/>
+                                                            )}
+                                                        </>
+                                                    )}
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
+                                    <div className="mt-4 text-center text-xs text-gray-400">
+                                        <span className="inline-block w-2 h-2 rounded-full bg-[#c84b31] mr-1"></span>
+                                        鑑賞した日（数字は回数）
+                                    </div>
                                 </div>
                             </div>
                         </div>
