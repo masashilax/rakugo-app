@@ -13,12 +13,20 @@
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
+    <!-- スマホでのドラッグ＆ドロップ用ポリフィル -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/mobile-drag-drop@2.3.0-rc.2/default.css">
+    <script src="https://cdn.jsdelivr.net/npm/mobile-drag-drop@2.3.0-rc.2/index.min.js"></script>
+    
     <style>
         body { font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif; -webkit-tap-highlight-color: transparent; }
         input, textarea { font-size: 16px !important; }
         body { background-color: #f7f3e8; }
         .spinner { border: 3px solid #f3f3f3; border-top: 3px solid #c84b31; border-radius: 50%; width: 20px; height: 20px; animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        /* ドラッグ中のスタイル調整 */
+        .drag-target { border: 2px dashed #c84b31 !important; opacity: 0.5; }
+        /* ドラッグ操作をスムーズにする */
+        .draggable-card { touch-action: pan-y; } 
     </style>
 </head>
 <body class="bg-[#f7f3e8] text-[#2c2c2c] select-none">
@@ -27,7 +35,16 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
 
-        // --- IndexedDB ヘルパー (大容量保存用) ---
+        // --- ドラッグ＆ドロップの初期化 ---
+        try {
+            MobileDragDrop.polyfill({
+                // スマホでスクロールとドラッグを区別するため、長押し(300ms)でドラッグ開始
+                holdToDrag: 300, 
+                dragImageTranslateOverride: MobileDragDrop.scrollBehaviourDragImageTranslateOverride
+            });
+        } catch (e) { console.log('DnD polyfill error', e); }
+
+        // --- IndexedDB ヘルパー ---
         const DB_NAME = 'RakugoAppDB';
         const STORE_NAME = 'logs';
         const DB_VERSION = 1;
@@ -100,9 +117,11 @@
             Camera: (p) => <Icon {...p} path='<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>' />,
             Image: (p) => <Icon {...p} path='<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>' />,
             RefreshCw: (p) => <Icon {...p} path='<path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>' />,
+            ArrowUpDown: (p) => <Icon {...p} path='<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/><path d="M12 2v20"/>' />,
+            GripVertical: (p) => <Icon {...p} path='<circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/>' />,
         };
 
-        // 画像圧縮関数 (軽量化設定)
+        // 画像圧縮関数
         const compressImage = (file) => {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -132,6 +151,15 @@
             });
         };
 
+        // ソート関数: 日付降順 -> 作成日時降順
+        const sortLogs = (logs) => {
+            return logs.sort((a, b) => {
+                const dateDiff = new Date(b.date) - new Date(a.date);
+                if (dateDiff !== 0) return dateDiff;
+                return new Date(b.createdAt) - new Date(a.createdAt);
+            });
+        };
+
         // --- アプリ本体 ---
         function RakugoApp() {
             const [logs, setLogs] = useState([]);
@@ -144,6 +172,10 @@
             const [editingLog, setEditingLog] = useState(null);
             const [isProcessingImages, setIsProcessingImages] = useState(false);
             
+            // ドラッグ中のアイテムID
+            const [draggedId, setDraggedId] = useState(null);
+            const [dragOverId, setDragOverId] = useState(null);
+
             // 入力フォーム
             const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
             const [venue, setVenue] = useState('');
@@ -164,13 +196,11 @@
                                 for (const item of parsed) {
                                     await dbPut(item);
                                 }
-                                console.log("Data migrated");
                                 localStorage.removeItem('rakugo_logs');
                             } catch (e) { console.error("Migration failed", e); }
                         }
                         const allLogs = await dbGetAll();
-                        allLogs.sort((a, b) => new Date(b.date) - new Date(a.date));
-                        setLogs(allLogs);
+                        setLogs(sortLogs(allLogs));
                     } catch (e) { console.error("DB Load failed", e); } finally { setIsLoaded(true); }
                 };
                 loadData();
@@ -303,7 +333,7 @@
                     await dbPut(newLog);
                     setLogs(prev => {
                         const next = editingLog ? prev.map(l => l.id === newLog.id ? newLog : l) : [newLog, ...prev];
-                        return next.sort((a,b) => new Date(b.date) - new Date(a.date));
+                        return sortLogs(next);
                     });
                     setIsModalOpen(false);
                 } catch (err) {
@@ -324,6 +354,62 @@
                         console.error("削除失敗", err);
                         alert("削除に失敗しました");
                     }
+                }
+            };
+
+            // --- ドラッグ＆ドロップ処理 ---
+            const handleDragStart = (e, log) => {
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", log.id);
+                setDraggedId(log.id);
+            };
+
+            const handleDragOver = (e, log) => {
+                e.preventDefault();
+                if (draggedId && draggedId !== log.id && log.date === logs.find(l => l.id === draggedId)?.date) {
+                    setDragOverId(log.id);
+                }
+            };
+
+            const handleDragLeave = () => {
+                setDragOverId(null);
+            }
+
+            const handleDrop = async (e, targetLog) => {
+                e.preventDefault();
+                setDragOverId(null);
+                const draggedLog = logs.find(l => l.id === draggedId);
+                
+                if (!draggedLog || !targetLog || draggedLog.id === targetLog.id) return;
+                
+                if (draggedLog.date !== targetLog.date) {
+                    setDraggedId(null);
+                    return;
+                }
+
+                // createdAt をスワップ
+                const logCreatedAt = draggedLog.createdAt;
+                const targetCreatedAt = targetLog.createdAt;
+
+                const updatedDragged = { ...draggedLog, createdAt: targetCreatedAt };
+                const updatedTarget = { ...targetLog, createdAt: logCreatedAt };
+
+                try {
+                    await dbPut(updatedDragged);
+                    await dbPut(updatedTarget);
+                    
+                    setLogs(prev => {
+                        const newLogs = prev.map(l => {
+                            if (l.id === draggedLog.id) return updatedDragged;
+                            if (l.id === targetLog.id) return updatedTarget;
+                            return l;
+                        });
+                        return sortLogs(newLogs);
+                    });
+                } catch (err) {
+                    console.error("Drop failed", err);
+                } finally {
+                    setDraggedId(null);
                 }
             };
 
@@ -367,9 +453,23 @@
                                 <p className="text-sm mt-2">右下のボタンから<br/>最初の寄席を追加してください</p>
                             </div>
                         ) : (
-                            logs.map(log => (
-                                <div key={log.id} onClick={() => openModal(log)} className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-[#c84b31] relative hover:shadow-md transition-shadow">
+                            logs.map((log) => (
+                                <div 
+                                    key={log.id} 
+                                    onClick={() => openModal(log)} 
+                                    className={`bg-white p-4 rounded-lg shadow-sm border-l-4 border-[#c84b31] relative transition-all draggable-card
+                                        hover:shadow-md
+                                        ${dragOverId === log.id ? 'drag-target' : ''}
+                                        ${draggedId === log.id ? 'opacity-30' : ''}
+                                    `}
+                                    draggable={true}
+                                    onDragStart={(e) => handleDragStart(e, log)}
+                                    onDragOver={(e) => handleDragOver(e, log)}
+                                    onDragLeave={handleDragLeave}
+                                    onDrop={(e) => handleDrop(e, log)}
+                                >
                                     <button onClick={(e) => handleDelete(log.id, e)} className="absolute top-2 right-2 p-2 text-red-500 hover:text-red-700 z-10"><Icons.Trash2 size={16}/></button>
+                                    
                                     <div className="text-xs text-gray-500 mb-2 font-mono flex items-center gap-2 pr-8">
                                         <span className="flex items-center gap-1"><Icons.Calendar size={12}/> {log.date.replace(/-/g, '.')}</span>
                                         <span className="text-gray-300">|</span>
@@ -401,10 +501,10 @@
                                 </div>
                                 <form onSubmit={handleSave} className="p-4 overflow-y-auto flex-1 space-y-4">
                                     <div className="grid grid-cols-2 gap-4">
-                                        <div><label className="text-xs font-bold text-gray-500 block mb-1">日付</label><input type="date" required value={date} onChange={e=>setDate(e.target.value)} className="w-full p-2 rounded border border-gray-300"/></div>
+                                        <div><label className="text-xs font-bold text-gray-500 block mb-1">日付</label><input type="date" required value={date} onChange={e=>setDate(e.target.value)} className="w-full h-10 p-2 rounded border border-gray-300 bg-white"/></div>
                                         <div>
                                             <label className="text-xs font-bold text-gray-500 block mb-1">場所</label>
-                                            <input type="text" list="venues" value={venue} onChange={e=>setVenue(e.target.value)} placeholder="末廣亭など" className="w-full p-2 rounded border border-gray-300"/>
+                                            <input type="text" list="venues" value={venue} onChange={e=>setVenue(e.target.value)} placeholder="末廣亭など" className="w-full h-10 p-2 rounded border border-gray-300"/>
                                             <datalist id="venues">{uniqueVenues.map(v=><option key={v} value={v}/>)}</datalist>
                                         </div>
                                     </div>
@@ -461,7 +561,6 @@
                                     <div className="grid grid-cols-7 text-center gap-1 mb-2 text-xs font-bold text-gray-400"><div>日</div><div>月</div><div>火</div><div>水</div><div>木</div><div>金</div><div>土</div></div>
                                     <div className="grid grid-cols-7 text-center gap-1">{[...Array(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth(), 1).getDay())].map((_,i)=><div key={`p${i}`}/>)}{[...Array(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth()+1, 0).getDate())].map((_,i)=>{const d=i+1,y=calendarViewDate.getFullYear(),m=calendarViewDate.getMonth()+1,isToday=new Date().toDateString()===new Date(y,m-1,d).toDateString(),logCount=logs.filter(l=>l.date===`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`).length;return(
                                         <div key={d} className={`h-10 w-10 relative flex flex-col items-center justify-center rounded-full ${isToday?'bg-[#2d4059] text-white':'hover:bg-gray-100'}`}>
-                                            {/* マーク (真上中央) */}
                                             {logCount > 0 && (
                                                 <div className="absolute top-1 left-1/2 -translate-x-1/2">
                                                     {logCount > 1 ? (
@@ -471,7 +570,6 @@
                                                     )}
                                                 </div>
                                             )}
-                                            {/* 日付 (少し下にオフセット) */}
                                             <span className={`text-sm ${isToday?'font-bold':''} mt-2`}>{d}</span>
                                         </div>
                                     )})}</div>
