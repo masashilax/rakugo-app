@@ -102,7 +102,7 @@
             RefreshCw: (p) => <Icon {...p} path='<path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>' />,
         };
 
-        // 画像圧縮関数 (少し軽量化設定に変更)
+        // 画像圧縮関数 (軽量化設定)
         const compressImage = (file) => {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -111,7 +111,7 @@
                     img.onload = () => {
                         const canvas = document.createElement("canvas");
                         const ctx = canvas.getContext("2d");
-                        const MAX_WIDTH = 600; // 800から600へ縮小
+                        const MAX_WIDTH = 600;
                         const MAX_HEIGHT = 600;
                         let width = img.width;
                         let height = img.height;
@@ -124,7 +124,7 @@
                         canvas.width = width;
                         canvas.height = height;
                         ctx.drawImage(img, 0, 0, width, height);
-                        resolve(canvas.toDataURL("image/jpeg", 0.5)); // 画質を0.6から0.5へ
+                        resolve(canvas.toDataURL("image/jpeg", 0.5));
                     };
                     img.src = e.target.result;
                 };
@@ -153,37 +153,25 @@
             
             const fileInputRef = useRef(null);
 
-            // 初期化：IndexedDBからデータ読み込み & LocalStorageからの移行
+            // 初期化
             useEffect(() => {
                 const loadData = async () => {
                     try {
-                        // 1. 古いLocalStorageのデータを確認
                         const oldData = localStorage.getItem('rakugo_logs');
                         if (oldData) {
                             try {
                                 const parsed = JSON.parse(oldData);
-                                // IndexedDBへ移行
                                 for (const item of parsed) {
                                     await dbPut(item);
                                 }
-                                console.log("Data migrated from LocalStorage to IndexedDB");
-                                // 移行完了したらLocalStorageを削除（容量確保のため）
+                                console.log("Data migrated");
                                 localStorage.removeItem('rakugo_logs');
-                            } catch (e) {
-                                console.error("Migration failed", e);
-                            }
+                            } catch (e) { console.error("Migration failed", e); }
                         }
-
-                        // 2. IndexedDBから全データ読み込み
                         const allLogs = await dbGetAll();
-                        // 日付順にソート
                         allLogs.sort((a, b) => new Date(b.date) - new Date(a.date));
                         setLogs(allLogs);
-                    } catch (e) {
-                        console.error("DB Load failed", e);
-                    } finally {
-                        setIsLoaded(true);
-                    }
+                    } catch (e) { console.error("DB Load failed", e); } finally { setIsLoaded(true); }
                 };
                 loadData();
             }, []);
@@ -277,8 +265,8 @@
                     );
                     setImages(prev => [...prev, ...compressedFiles]);
                 } catch (err) {
-                    console.error("画像の処理に失敗しました", err);
-                    alert("一部の画像の読み込みに失敗しました");
+                    console.error("画像処理失敗", err);
+                    alert("画像の読み込みに失敗しました");
                 } finally {
                     setIsProcessingImages(false);
                 }
@@ -294,7 +282,7 @@
 
             const handleSave = async (e) => {
                 e.preventDefault();
-                setIsProcessingImages(true); // 保存中ガード
+                setIsProcessingImages(true);
                 const cleanLineup = lineup.filter(i => i.performer.trim() || i.story.trim());
                 const finalLineup = cleanLineup.length ? cleanLineup : [{performer:'', story:''}];
                 
@@ -312,15 +300,11 @@
                 };
 
                 try {
-                    // IndexedDBへ保存
                     await dbPut(newLog);
-                    
-                    // State更新 (ソート込み)
                     setLogs(prev => {
                         const next = editingLog ? prev.map(l => l.id === newLog.id ? newLog : l) : [newLog, ...prev];
                         return next.sort((a,b) => new Date(b.date) - new Date(a.date));
                     });
-                    
                     setIsModalOpen(false);
                 } catch (err) {
                     console.error("保存失敗", err);
@@ -348,10 +332,7 @@
             };
 
             if (!isLoaded) {
-                return <div className="min-h-screen bg-[#f7f3e8] flex items-center justify-center text-[#2c2c2c] flex-col gap-2">
-                    <div className="spinner"></div>
-                    <div className="text-sm font-bold">読み込み中...</div>
-                </div>;
+                return <div className="min-h-screen bg-[#f7f3e8] flex items-center justify-center text-[#2c2c2c] flex-col gap-2"><div className="spinner"></div><div className="text-sm font-bold">読み込み中...</div></div>;
             }
 
             return (
@@ -363,7 +344,7 @@
                             </h1>
                             <div className="flex gap-3 items-center">
                                 <div className="text-sm font-bold text-[#eecda3] flex items-center gap-1"><Icons.BookOpen size={14}/> {logs.length}席</div>
-                                <button onClick={handleReload} className="text-white/70 hover:text-white" title="最新の状態に更新"><Icons.RefreshCw size={20}/></button>
+                                <button onClick={handleReload} className="text-white/70 hover:text-white" title="更新"><Icons.RefreshCw size={20}/></button>
                             </div>
                         </div>
                         <div className="flex gap-3 text-xs">
@@ -389,7 +370,6 @@
                             logs.map(log => (
                                 <div key={log.id} onClick={() => openModal(log)} className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-[#c84b31] relative hover:shadow-md transition-shadow">
                                     <button onClick={(e) => handleDelete(log.id, e)} className="absolute top-2 right-2 p-2 text-red-500 hover:text-red-700 z-10"><Icons.Trash2 size={16}/></button>
-                                    
                                     <div className="text-xs text-gray-500 mb-2 font-mono flex items-center gap-2 pr-8">
                                         <span className="flex items-center gap-1"><Icons.Calendar size={12}/> {log.date.replace(/-/g, '.')}</span>
                                         <span className="text-gray-300">|</span>
@@ -443,7 +423,6 @@
                                         <button type="button" onClick={()=>setLineup([...lineup,{performer:'',story:''}])} className="w-full py-2 border-2 border-dashed rounded text-gray-500 font-bold flex justify-center gap-2 text-sm"><Icons.Plus size={16}/> 追加</button>
                                     </div>
                                     <div><label className="text-xs font-bold text-gray-500 block mb-1">メモ</label><textarea rows={3} value={notes} onChange={e=>setNotes(e.target.value)} className="w-full p-2 rounded border border-gray-300"/></div>
-                                    
                                     <div>
                                         <label className="text-xs font-bold text-gray-500 block mb-1">写真 (最大3枚)</label>
                                         <div className="space-y-2">
@@ -451,36 +430,24 @@
                                                 <div className="grid grid-cols-3 gap-2 mb-2">
                                                     {images.map((img, idx) => (
                                                         <div key={idx} className="relative aspect-square group">
-                                                            <img 
-                                                                src={img} 
-                                                                alt={`記録写真${idx+1}`} 
-                                                                className="w-full h-full object-cover rounded border border-gray-200 cursor-zoom-in" 
-                                                                onClick={() => setViewImage(img)}
-                                                            />
-                                                            <button type="button" onClick={() => handleRemoveImage(idx)} className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 shadow-md z-10">
-                                                                <Icons.X size={12} />
-                                                            </button>
+                                                            <img src={img} alt={`記録写真${idx+1}`} className="w-full h-full object-cover rounded border border-gray-200 cursor-zoom-in" onClick={() => setViewImage(img)}/>
+                                                            <button type="button" onClick={() => handleRemoveImage(idx)} className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 shadow-md z-10"><Icons.X size={12} /></button>
                                                         </div>
                                                     ))}
                                                 </div>
                                             )}
-                                            
                                             {images.length < 3 && (
                                                 <button type="button" onClick={() => fileInputRef.current.click()} disabled={isProcessingImages} className="w-full h-12 border-2 border-dashed border-gray-300 rounded flex items-center justify-center gap-2 text-gray-400 hover:bg-gray-50 text-sm">
                                                     {isProcessingImages ? <div className="spinner"></div> : <Icons.Camera size={18} />}
                                                     <span>{isProcessingImages ? '処理中...' : `写真を追加 ${images.length > 0 ? `(${images.length}/3)` : ''}`}</span>
                                                 </button>
                                             )}
-                                            
                                             <input type="file" ref={fileInputRef} onChange={handleImageSelect} accept="image/*" multiple className="hidden" />
                                         </div>
                                     </div>
-
                                 </form>
                                 <div className="p-4 bg-gray-50 border-t">
-                                    <button onClick={handleSave} disabled={isProcessingImages} className="w-full bg-[#2d4059] text-white font-bold py-3 rounded flex justify-center gap-2 items-center">
-                                        <Icons.Save size={18}/> 保存
-                                    </button>
+                                    <button onClick={handleSave} disabled={isProcessingImages} className="w-full bg-[#2d4059] text-white font-bold py-3 rounded flex justify-center gap-2 items-center"><Icons.Save size={18}/> 保存</button>
                                 </div>
                             </div>
                         </div>
@@ -492,7 +459,22 @@
                                 <div className="p-4">
                                     <div className="flex justify-between items-center mb-4"><button onClick={()=>setCalendarViewDate(new Date(calendarViewDate.setMonth(calendarViewDate.getMonth()-1)))} className="p-2 bg-gray-100 rounded-full"><Icons.ChevronLeft/></button><span className="font-bold text-lg">{calendarViewDate.getFullYear()}年 {calendarViewDate.getMonth()+1}月</span><button onClick={()=>setCalendarViewDate(new Date(calendarViewDate.setMonth(calendarViewDate.getMonth()+1)))} className="p-2 bg-gray-100 rounded-full"><Icons.ChevronRight/></button></div>
                                     <div className="grid grid-cols-7 text-center gap-1 mb-2 text-xs font-bold text-gray-400"><div>日</div><div>月</div><div>火</div><div>水</div><div>木</div><div>金</div><div>土</div></div>
-                                    <div className="grid grid-cols-7 text-center gap-1">{[...Array(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth(), 1).getDay())].map((_,i)=><div key={`p${i}`}/>)}{[...Array(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth()+1, 0).getDate())].map((_,i)=>{const d=i+1,y=calendarViewDate.getFullYear(),m=calendarViewDate.getMonth()+1,isToday=new Date().toDateString()===new Date(y,m-1,d).toDateString(),logCount=logs.filter(l=>l.date===`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`).length;return(<div key={d} className={`h-10 w-10 flex flex-col items-center justify-center rounded-full relative ${isToday?'bg-[#2d4059] text-white':'hover:bg-gray-100'}`}><span className={`text-sm ${isToday?'font-bold':''}`}>{d}</span>{logCount>0 && <>{logCount>1?<span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[9px] flex items-center justify-center rounded-full border border-white">{logCount}</span>:<div className={`w-1.5 h-1.5 rounded-full absolute bottom-1 ${isToday?'bg-red-400':'bg-[#c84b31]'}`}/>}</>}</div>)})}</div>
+                                    <div className="grid grid-cols-7 text-center gap-1">{[...Array(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth(), 1).getDay())].map((_,i)=><div key={`p${i}`}/>)}{[...Array(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth()+1, 0).getDate())].map((_,i)=>{const d=i+1,y=calendarViewDate.getFullYear(),m=calendarViewDate.getMonth()+1,isToday=new Date().toDateString()===new Date(y,m-1,d).toDateString(),logCount=logs.filter(l=>l.date===`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`).length;return(
+                                        <div key={d} className={`h-10 w-10 relative flex flex-col items-center justify-center rounded-full ${isToday?'bg-[#2d4059] text-white':'hover:bg-gray-100'}`}>
+                                            {/* マーク (真上中央) */}
+                                            {logCount > 0 && (
+                                                <div className="absolute top-1 left-1/2 -translate-x-1/2">
+                                                    {logCount > 1 ? (
+                                                        <span className="w-3.5 h-3.5 bg-red-500 text-white text-[9px] font-bold flex items-center justify-center rounded-full border border-white shadow-sm">{logCount}</span>
+                                                    ) : (
+                                                        <div className={`w-1.5 h-1.5 rounded-full ${isToday?'bg-red-400':'bg-[#c84b31]'}`}/>
+                                                    )}
+                                                </div>
+                                            )}
+                                            {/* 日付 (少し下にオフセット) */}
+                                            <span className={`text-sm ${isToday?'font-bold':''} mt-2`}>{d}</span>
+                                        </div>
+                                    )})}</div>
                                     <div className="mt-4 text-center text-xs text-gray-400"><span className="inline-block w-2 h-2 rounded-full bg-[#c84b31] mr-1"></span>鑑賞した日（数字は回数）</div>
                                 </div>
                             </div>
