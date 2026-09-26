@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -196,6 +195,55 @@
             });
         };
  
+        // --- フォームの見た目（入力欄とボタンを見分けやすく） ---
+        const SECTION = "bg-white rounded-xl p-3 border border-gray-200 space-y-3";
+        const SECTION_TITLE = "text-sm font-bold text-[#2d4059]";
+        const LABEL = "text-xs font-bold text-gray-600 block mb-1";
+        const INPUT = "w-full h-11 px-3 rounded-lg border border-gray-300 bg-white text-[#2c2c2c] placeholder:text-gray-400 focus:outline-none focus:border-[#2d4059] focus:ring-2 focus:ring-[#2d4059]/20";
+        const SUB_BUTTON = "w-full h-11 rounded-lg bg-[#2d4059]/10 text-[#2d4059] font-bold flex items-center justify-center gap-2 active:bg-[#2d4059]/20 hover:bg-[#2d4059]/15";
+ 
+        // --- 入力候補 ---
+        const DEFAULT_VENUES = ['新宿末廣亭', '鈴本演芸場', '浅草演芸ホール', '池袋演芸場'];
+        const byFrequency = (counts) => Array.from(counts.entries())
+            .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ja'))
+            .map(([name]) => name);
+ 
+        // 打った文字を含む過去の入力を、欄のすぐ下に出す（タップで確定）
+        function SuggestInput({ value, onChange, candidates, placeholder, className, icon: ItemIcon }) {
+            const [open, setOpen] = useState(false);
+            const q = (value || '').trim();
+            const matches = open && q ? candidates.filter(c => c !== q && c.includes(q)).slice(0, 5) : [];
+ 
+            return (
+                <div>
+                    <input
+                        value={value}
+                        onChange={e => { onChange(e.target.value); setOpen(true); }}
+                        onFocus={() => setOpen(true)}
+                        onBlur={() => setTimeout(() => setOpen(false), 150)}
+                        placeholder={placeholder}
+                        autoComplete="off"
+                        className={className}
+                    />
+                    {matches.length > 0 && (
+                        <div className="mt-1 rounded-lg border border-gray-200 bg-white shadow-md overflow-hidden divide-y divide-gray-100">
+                            {matches.map(m => (
+                                <button
+                                    type="button"
+                                    key={m}
+                                    onMouseDown={e => e.preventDefault()}
+                                    onClick={() => { onChange(m); setOpen(false); }}
+                                    className="w-full text-left px-3 h-11 text-sm font-bold text-[#2d4059] hover:bg-gray-50 active:bg-gray-100 flex items-center gap-2"
+                                >
+                                    {ItemIcon && <ItemIcon size={14} className="text-gray-400 shrink-0"/>}{m}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+ 
         // --- ログイン画面 ---
         function LoginScreen() {
             const [email, setEmail] = useState('');
@@ -312,19 +360,21 @@
                 })();
             }, [uid]);
  
-            const uniquePerformers = useMemo(() => {
-                const names = new Set();
+            // 過去の記録から候補を作る（よく出てくる順）
+            const performerCandidates = useMemo(() => {
+                const counts = new Map();
                 logs.forEach(log => {
-                    if (log.lineup) log.lineup.forEach(item => { if(item.performer) names.add(item.performer); });
-                    else if (log.performer) names.add(log.performer);
+                    const items = log.lineup && log.lineup.length ? log.lineup : [{ performer: log.performer }];
+                    items.forEach(item => { const n = (item.performer || '').trim(); if (n) counts.set(n, (counts.get(n) || 0) + 1); });
                 });
-                return Array.from(names).sort();
+                return byFrequency(counts);
             }, [logs]);
  
-            const uniqueVenues = useMemo(() => {
-                const venues = new Set();
-                logs.forEach(log => { if(log.venue) venues.add(log.venue); });
-                return Array.from(venues).sort();
+            const venueCandidates = useMemo(() => {
+                const counts = new Map();
+                logs.forEach(log => { const v = (log.venue || '').trim(); if (v) counts.set(v, (counts.get(v) || 0) + 1); });
+                const fromHistory = byFrequency(counts).slice(0, 6);
+                return fromHistory.length ? fromHistory : DEFAULT_VENUES;
             }, [logs]);
  
             const stats = useMemo(() => {
@@ -460,13 +510,14 @@
                 closeModal();
             };
  
-            const handleDelete = (id, e) => {
-                e.stopPropagation();
-                if(confirm('削除しますか？')) {
-                    deleteLog(uid, id).catch(err => {
+            const handleDeleteFromModal = () => {
+                if (!editingLog) return;
+                if (confirm('この記録を削除しますか？\n（元に戻せません）')) {
+                    deleteLog(uid, editingLog.id).catch(err => {
                         console.error("削除失敗", err);
                         alert("削除に失敗しました");
                     });
+                    closeModal();
                 }
             };
  
@@ -592,14 +643,14 @@
                             <div className="text-center py-20 opacity-50">
                                 <div className="text-6xl mb-4">🎭</div>
                                 <p className="font-bold">まだ記録がありません</p>
-                                <p className="text-sm mt-2">右下のボタンから<br/>最初の寄席を追加してください</p>
+                                <p className="text-sm mt-2">右下の「記録する」から<br/>最初の寄席を追加してください</p>
                             </div>
                         ) : (
                             logs.map((log) => (
                                 <div
                                     key={log.id}
                                     onClick={() => openModal(log)}
-                                    className={`bg-white p-4 rounded-lg shadow-sm border-l-4 border-[#c84b31] relative transition-all draggable-card
+                                    className={`bg-white p-4 rounded-lg shadow-sm border-l-4 border-[#c84b31] relative transition-all draggable-card cursor-pointer active:bg-gray-50
                                         hover:shadow-md
                                         ${dragOverId === log.id ? 'drag-target' : ''}
                                         ${draggedId === log.id ? 'opacity-30' : ''}
@@ -610,15 +661,15 @@
                                     onDragLeave={handleDragLeave}
                                     onDrop={(e) => handleDrop(e, log)}
                                 >
-                                    <button onClick={(e) => handleDelete(log.id, e)} className="absolute top-2 right-2 p-2 text-red-500 hover:text-red-700 z-10"><Icons.Trash2 size={16}/></button>
+                                    <Icons.ChevronRight size={20} className="absolute top-1/2 -translate-y-1/2 right-3 text-gray-300"/>
  
-                                    <div className="text-xs text-gray-500 mb-2 font-mono flex items-center gap-2 pr-8">
+                                    <div className="text-xs text-gray-500 mb-2 font-mono flex items-center gap-2 pr-6">
                                         <span className="flex items-center gap-1"><Icons.Calendar size={12}/> {(log.date || '').replace(/-/g, '.')}</span>
                                         <span className="text-gray-300">|</span>
                                         <span className="flex items-center gap-1"><Icons.MapPin size={12}/> {log.venue || '未定'}</span>
                                         {log.imageCount > 0 && <span className="text-gray-400 ml-auto flex items-center gap-1"><Icons.Image size={14}/> {log.imageCount > 1 ? log.imageCount : ''}</span>}
                                     </div>
-                                    <div className="space-y-2 mb-2">
+                                    <div className="space-y-2 mb-2 pr-6">
                                         {(log.lineup && log.lineup.length ? log.lineup : [{performer: log.performer, story: log.story}]).map((item, idx) => (
                                             <div key={idx}>
                                                 <h3 className="text-lg font-bold text-[#2d4059]">{item.story || '演目なし'}</h3>
@@ -626,73 +677,106 @@
                                             </div>
                                         ))}
                                     </div>
-                                    {log.notes && <div className="bg-[#fcfaf5] p-2 text-sm text-gray-600 rounded border border-[#eecda3]/30">{log.notes}</div>}
+                                    {log.notes && <div className="mr-6 bg-[#fcfaf5] p-2 text-sm text-gray-600 rounded border border-[#eecda3]/30">{log.notes}</div>}
                                 </div>
                             ))
                         )}
                     </main>
  
-                    <button onClick={() => openModal()} className="fixed bottom-6 right-6 bg-[#c84b31] text-white p-4 rounded-full shadow-lg hover:scale-105 transition-transform z-20"><Icons.Plus size={28}/></button>
+                    <button onClick={() => openModal()} className="fixed bottom-6 right-6 bg-[#c84b31] text-white h-14 pl-4 pr-5 rounded-full shadow-lg active:scale-95 transition-transform z-20 flex items-center gap-1 font-bold"><Icons.Plus size={24}/> 記録する</button>
  
                     {isModalOpen && (
                         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-                            <div className="bg-[#fcfaf5] w-full max-w-md rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-                                <div className="bg-[#2d4059] text-white p-4 flex justify-between items-center">
-                                    <h2 className="font-bold flex gap-2 items-center">{editingLog ? <Icons.Edit2 size={18}/> : <Icons.BookOpen size={18}/>} {editingLog ? '編集' : '新規記録'}</h2>
-                                    <button onClick={closeModal}><Icons.X size={20}/></button>
+                            <div className="bg-[#f7f3e8] w-full max-w-md rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                                <div className="bg-[#2d4059] text-white px-4 py-3 flex justify-between items-center">
+                                    <h2 className="font-bold flex gap-2 items-center">{editingLog ? <Icons.Edit2 size={18}/> : <Icons.BookOpen size={18}/>} {editingLog ? '記録を編集' : '新しい記録'}</h2>
+                                    <button type="button" onClick={closeModal} aria-label="閉じる" className="w-10 h-10 -mr-2 rounded-full flex items-center justify-center hover:bg-white/10"><Icons.X size={22}/></button>
                                 </div>
-                                <form onSubmit={handleSave} className="p-4 overflow-y-auto flex-1 space-y-4">
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div><label className="text-xs font-bold text-gray-500 block mb-1">日付</label><input type="date" required value={date} onChange={e=>setDate(e.target.value)} className="w-full h-10 p-2 rounded border border-gray-300 bg-white"/></div>
+                                <form onSubmit={handleSave} className="p-3 overflow-y-auto flex-1 space-y-3">
+                                    {/* いつ・どこで */}
+                                    <section className={SECTION}>
+                                        <h3 className={SECTION_TITLE}>いつ・どこで</h3>
                                         <div>
-                                            <label className="text-xs font-bold text-gray-500 block mb-1">場所</label>
-                                            <input type="text" list="venues" value={venue} onChange={e=>setVenue(e.target.value)} placeholder="末廣亭など" className="w-full h-10 p-2 rounded border border-gray-300"/>
-                                            <datalist id="venues">{uniqueVenues.map(v=><option key={v} value={v}/>)}</datalist>
+                                            <label className={LABEL}>日付</label>
+                                            <input type="date" required value={date} onChange={e=>setDate(e.target.value)} className={INPUT}/>
                                         </div>
-                                    </div>
-                                    <div className="space-y-2">
-                                        <div className="flex justify-between"><label className="text-xs font-bold text-gray-500">演目・演者</label><span className="text-xs text-gray-400">上から順</span></div>
-                                        <datalist id="performers">{uniquePerformers.map(p=><option key={p} value={p}/>)}</datalist>
+                                        <div>
+                                            <label className={LABEL}>場所</label>
+                                            <input type="text" value={venue} onChange={e=>setVenue(e.target.value)} placeholder="寄席の名前" autoComplete="off" className={INPUT}/>
+                                            <div className="flex flex-wrap gap-2 mt-2">
+                                                {venueCandidates.map(v => (
+                                                    <button
+                                                        type="button"
+                                                        key={v}
+                                                        onClick={() => setVenue(v)}
+                                                        className={`h-9 px-3 rounded-full text-sm font-bold border transition-colors ${venue === v ? 'bg-[#2d4059] text-white border-[#2d4059]' : 'bg-white text-[#2d4059] border-[#2d4059]/30 active:bg-[#2d4059]/10'}`}
+                                                    >{v}</button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </section>
+ 
+                                    {/* 出演 */}
+                                    <section className={SECTION}>
+                                        <div className="flex justify-between items-baseline">
+                                            <h3 className={SECTION_TITLE}>出演</h3>
+                                            <span className="text-xs text-gray-500">出てきた順に</span>
+                                        </div>
                                         {lineup.map((item, idx) => (
-                                            <div key={idx} className="flex gap-2 bg-white p-2 rounded border border-gray-200">
+                                            <div key={idx} className={`flex gap-2 items-start ${idx > 0 ? 'pt-3 border-t border-gray-100' : ''}`}>
+                                                <div className="w-7 h-7 mt-2 shrink-0 rounded-full bg-[#2d4059] text-white text-xs font-bold flex items-center justify-center">{idx+1}</div>
                                                 <div className="flex-1 space-y-2">
-                                                    <input placeholder="演目 (芝浜)" value={item.story} onChange={e=>{const n=[...lineup];n[idx]={...n[idx],story:e.target.value};setLineup(n)}} className="w-full p-1 border-b font-bold"/>
-                                                    <input placeholder="演者" list="performers" value={item.performer} onChange={e=>{const n=[...lineup];n[idx]={...n[idx],performer:e.target.value};setLineup(n)}} className="w-full p-1 text-sm"/>
+                                                    <SuggestInput placeholder="演者" value={item.performer} candidates={performerCandidates} icon={Icons.User} onChange={v=>{setLineup(prev=>prev.map((it,i)=>i===idx?{...it,performer:v}:it))}} className={`${INPUT} font-bold`}/>
+                                                    <input placeholder="演目" value={item.story} onChange={e=>{const n=[...lineup];n[idx]={...n[idx],story:e.target.value};setLineup(n)}} className={INPUT}/>
                                                 </div>
-                                                {lineup.length>1 && <button type="button" onClick={()=>{setLineup(lineup.filter((_,i)=>i!==idx))}} className="text-gray-300"><Icons.MinusCircle/></button>}
+                                                {lineup.length>1 && (
+                                                    <button type="button" aria-label={`${idx+1}番目を削除`} onClick={()=>{ if ((item.performer||item.story) && !confirm('この出演者を削除しますか？')) return; setLineup(lineup.filter((_,i)=>i!==idx)); }} className="w-9 h-9 mt-1 shrink-0 rounded-full text-gray-400 hover:bg-red-50 hover:text-red-600 active:bg-red-100 flex items-center justify-center"><Icons.X size={18}/></button>
+                                                )}
                                             </div>
                                         ))}
-                                        <button type="button" onClick={()=>setLineup([...lineup,{performer:'',story:''}])} className="w-full py-2 border-2 border-dashed rounded text-gray-500 font-bold flex justify-center gap-2 text-sm"><Icons.Plus size={16}/> 追加</button>
-                                    </div>
-                                    <div><label className="text-xs font-bold text-gray-500 block mb-1">メモ</label><textarea rows={3} value={notes} onChange={e=>setNotes(e.target.value)} className="w-full p-2 rounded border border-gray-300"/></div>
-                                    <div>
-                                        <label className="text-xs font-bold text-gray-500 block mb-1">写真 (最大3枚)</label>
-                                        <div className="space-y-2">
-                                            {isLoadingImages && (
-                                                <div className="h-12 flex items-center justify-center gap-2 text-gray-400 text-sm"><div className="spinner"></div> 写真を読み込み中...</div>
-                                            )}
-                                            {images.length > 0 && (
-                                                <div className="grid grid-cols-3 gap-2 mb-2">
-                                                    {images.map((img, idx) => (
-                                                        <div key={idx} className="relative aspect-square group">
-                                                            <img src={img} alt={`記録写真${idx+1}`} className="w-full h-full object-cover rounded border border-gray-200 cursor-zoom-in" onClick={() => setViewImage(img)}/>
-                                                            <button type="button" onClick={() => handleRemoveImage(idx)} className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 shadow-md z-10"><Icons.X size={12} /></button>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            )}
-                                            {!isLoadingImages && images.length < 3 && (
-                                                <button type="button" onClick={() => fileInputRef.current.click()} disabled={isProcessingImages} className="w-full h-12 border-2 border-dashed border-gray-300 rounded flex items-center justify-center gap-2 text-gray-400 hover:bg-gray-50 text-sm">
-                                                    {isProcessingImages ? <div className="spinner"></div> : <Icons.Camera size={18} />}
-                                                    <span>{isProcessingImages ? '処理中...' : `写真を追加 ${images.length > 0 ? `(${images.length}/3)` : ''}`}</span>
-                                                </button>
-                                            )}
-                                            <input type="file" ref={fileInputRef} onChange={handleImageSelect} accept="image/*" multiple className="hidden" />
+                                        <button type="button" onClick={()=>setLineup([...lineup,{performer:'',story:''}])} className={SUB_BUTTON}><Icons.Plus size={18}/> 出演者を追加</button>
+                                    </section>
+ 
+                                    {/* メモ */}
+                                    <section className={SECTION}>
+                                        <h3 className={SECTION_TITLE}>メモ</h3>
+                                        <textarea rows={3} value={notes} onChange={e=>setNotes(e.target.value)} placeholder="感想など" className={`${INPUT} h-auto py-2`}/>
+                                    </section>
+ 
+                                    {/* 写真 */}
+                                    <section className={SECTION}>
+                                        <div className="flex justify-between items-baseline">
+                                            <h3 className={SECTION_TITLE}>写真</h3>
+                                            <span className="text-xs text-gray-500">{images.length}/3枚</span>
                                         </div>
-                                    </div>
+                                        {isLoadingImages && (
+                                            <div className="h-12 flex items-center justify-center gap-2 text-gray-500 text-sm"><div className="spinner"></div> 写真を読み込み中...</div>
+                                        )}
+                                        {images.length > 0 && (
+                                            <div className="grid grid-cols-3 gap-2">
+                                                {images.map((img, idx) => (
+                                                    <div key={idx} className="relative aspect-square">
+                                                        <img src={img} alt={`記録写真${idx+1}`} className="w-full h-full object-cover rounded-lg border border-gray-200 cursor-zoom-in" onClick={() => setViewImage(img)}/>
+                                                        <button type="button" aria-label="写真を削除" onClick={() => handleRemoveImage(idx)} className="absolute top-1 right-1 w-7 h-7 bg-black/60 text-white rounded-full shadow-md flex items-center justify-center"><Icons.X size={14} /></button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                        {!isLoadingImages && images.length < 3 && (
+                                            <button type="button" onClick={() => fileInputRef.current.click()} disabled={isProcessingImages} className={SUB_BUTTON}>
+                                                {isProcessingImages ? <div className="spinner"></div> : <Icons.Camera size={18} />}
+                                                <span>{isProcessingImages ? '処理中...' : '写真を追加'}</span>
+                                            </button>
+                                        )}
+                                        <input type="file" ref={fileInputRef} onChange={handleImageSelect} accept="image/*" multiple className="hidden" />
+                                    </section>
+ 
+                                    {editingLog && (
+                                        <button type="button" onClick={handleDeleteFromModal} className="w-full py-3 text-sm font-bold text-red-600 flex items-center justify-center gap-2"><Icons.Trash2 size={16}/> この記録を削除</button>
+                                    )}
                                 </form>
-                                <div className="p-4 bg-gray-50 border-t">
-                                    <button onClick={handleSave} disabled={imagesBusy} className={`w-full bg-[#2d4059] text-white font-bold py-3 rounded flex justify-center gap-2 items-center ${imagesBusy ? 'opacity-50' : ''}`}><Icons.Save size={18}/> 保存</button>
+                                <div className="p-3 bg-white border-t border-gray-200">
+                                    <button onClick={handleSave} disabled={imagesBusy} className={`w-full h-12 bg-[#c84b31] text-white text-base font-bold rounded-lg shadow-md active:scale-[0.98] transition-transform flex justify-center gap-2 items-center ${imagesBusy ? 'opacity-50' : ''}`}><Icons.Save size={20}/> 保存する</button>
                                 </div>
                             </div>
                         </div>
