@@ -592,6 +592,15 @@
                 closeModal();
             };
 
+            const handleDeleteCard = (log) => {
+                const title = (log.lineup && log.lineup[0] && (log.lineup[0].story || log.lineup[0].performer)) || log.story || '';
+                if (!confirm(`${(log.date || '').replace(/-/g, '.')} ${log.venue || ''}${title ? `「${title}」` : ''}\nこの記録を削除しますか？（元に戻せません）`)) return;
+                deleteLog(uid, log.id, log.imageCount || 0).catch(err => {
+                    console.error("削除失敗", err);
+                    alert("削除に失敗しました");
+                });
+            };
+
             const handleDeleteFromModal = () => {
                 if (!editingLog) return;
                 if (confirm('この記録を削除しますか？\n（元に戻せません）')) {
@@ -604,12 +613,6 @@
             };
 
             // --- 並べ替え（右端のつまみをドラッグ。同じ日の記録の中だけ） ---
-            const countByDate = useMemo(() => {
-                const m = new Map();
-                logs.forEach(l => m.set(l.date, (m.get(l.date) || 0) + 1));
-                return m;
-            }, [logs]);
-
             // ドラッグ中（と保存が画面に返ってくるまで）は、その日の並びだけ差し替えて表示
             const displayLogs = useMemo(() => {
                 if (!dragOrder) return logs;
@@ -624,41 +627,9 @@
                 if (!dragRef.current) setDragOrder(null);
             }, [logs]);
 
-            const handleGripDown = (e, log) => {
-                e.preventDefault();
-                e.stopPropagation();
-                e.currentTarget.setPointerCapture(e.pointerId);
-                const order = logs.filter(l => l.date === log.date).map(l => l.id);
-                dragRef.current = { id: log.id, order };
-                setDragId(log.id);
-                setDragOrder(order);
-            };
-
-            const handleGripMove = (e) => {
-                const d = dragRef.current;
-                if (!d) return;
-                // 指より上にあるカードの数 = 入る位置
-                const others = d.order.filter(id => id !== d.id);
-                const index = others.filter(id => {
-                    const el = document.getElementById(`log-${id}`);
-                    if (!el) return false;
-                    const r = el.getBoundingClientRect();
-                    return r.top + r.height / 2 < e.clientY;
-                }).length;
-                const next = [...others.slice(0, index), d.id, ...others.slice(index)];
-                if (next.join() !== d.order.join()) {
-                    d.order = next;
-                    setDragOrder(next);
-                }
-            };
-
-            const handleGripUp = () => {
-                const d = dragRef.current;
-                dragRef.current = null;
-                setDragId(null);
-                if (!d) return;
-                const group = d.order.map(id => logs.find(l => l.id === id)).filter(Boolean);
-                // 一覧は createdAt の新しい順なので、その日の createdAt を新しい順に並べて上のカードから割り当てる
+            // 並べ替えた順を保存する。一覧は createdAt の新しい順なので、その日の createdAt を新しい順に並べて上のカードから割り当てる
+            const saveOrder = (order) => {
+                const group = order.map(id => logs.find(l => l.id === id)).filter(Boolean);
                 const times = group.map(l => new Date(l.createdAt).getTime() || 0).sort((a, b) => b - a);
                 for (let i = 1; i < times.length; i++) if (times[i] >= times[i - 1]) times[i] = times[i - 1] - 1; // 同じ時刻だと順番が決まらないのでずらす
                 const batch = db.batch();
@@ -675,10 +646,111 @@
                 });
             };
 
-            const handleGripCancel = () => {
-                dragRef.current = null;
-                setDragId(null);
-                setDragOrder(null);
+            // つまみを押したらドラッグ開始。
+            // 動かしている間は React で描き直さず、カードの見た目の位置（transform）だけを直接動かす（なめらかにするため）。
+            // 指の動きは画面全体で受け取る（カードの位置が変わっても取りこぼさないように）
+            const handleGripDown = (e, log) => {
+                if (dragRef.current) return;
+                e.preventDefault();
+                e.stopPropagation();
+                const ids = logs.filter(l => l.date === log.date).map(l => l.id);
+                const els = ids.map(id => document.getElementById(`log-${id}`));
+                if (els.some(el => !el)) return;
+                const rects = els.map(el => el.getBoundingClientRect());
+                const from = ids.indexOf(log.id);
+                const gap = rects.length > 1 ? rects[1].top - rects[0].bottom : 16;
+                const d = {
+                    id: log.id, ids, els, rects, from, to: from,
+                    step: rects[from].height + gap, // ほかのカードがずれる幅
+                    startY: e.clientY, pointerY: e.clientY, startScroll: window.scrollY, raf: 0,
+                };
+                dragRef.current = d;
+                setDragId(log.id);
+
+                els.forEach((el, i) => {
+                    el.style.transition = i === from ? 'none' : 'transform 200ms ease';
+                    el.style.willChange = 'transform';
+                });
+                els[from].style.zIndex = '20';
+
+                const update = () => {
+                    d.raf = 0;
+                    // 画面の端では自動でスクロール
+                    const edge = 80;
+                    if (d.pointerY < edge) window.scrollBy(0, -Math.ceil((edge - d.pointerY) / 6));
+                    else if (d.pointerY > window.innerHeight - edge) window.scrollBy(0, Math.ceil((d.pointerY - window.innerHeight + edge) / 6));
+
+                    // 同じ日のカードの範囲の外へは、少しだけ伸びて止まる
+                    const raw = d.pointerY - d.startY + (window.scrollY - d.startScroll);
+                    const min = rects[0].top - rects[from].top;
+                    const max = rects[rects.length - 1].bottom - rects[from].bottom;
+                    const dy = raw < min ? min - Math.min(24, (min - raw) / 4)
+                             : raw > max ? max + Math.min(24, (raw - max) / 4)
+                             : raw;
+
+                    // 掴んだカードの真ん中がほかのカードの真ん中を越えたら、そこへ入る
+                    const center = rects[from].top + rects[from].height / 2 + dy;
+                    let to = from;
+                    rects.forEach((r, i) => {
+                        const mid = r.top + r.height / 2;
+                        if (i < from && center < mid) to = Math.min(to, i);
+                        if (i > from && center > mid) to = Math.max(to, i);
+                    });
+                    d.to = to;
+
+                    els.forEach((el, i) => {
+                        if (i === from) el.style.transform = `translateY(${dy}px) scale(1.03)`;
+                        else if (from < i && i <= to) el.style.transform = `translateY(${-d.step}px)`;
+                        else if (to <= i && i < from) el.style.transform = `translateY(${d.step}px)`;
+                        else el.style.transform = '';
+                    });
+
+                    if (d.pointerY < edge || d.pointerY > window.innerHeight - edge) d.raf = requestAnimationFrame(update);
+                };
+
+                const onMove = (ev) => {
+                    ev.preventDefault();
+                    d.pointerY = ev.clientY;
+                    if (!d.raf) d.raf = requestAnimationFrame(update);
+                };
+
+                const finish = (ev) => {
+                    window.removeEventListener('pointermove', onMove);
+                    window.removeEventListener('pointerup', finish);
+                    window.removeEventListener('pointercancel', finish);
+                    cancelAnimationFrame(d.raf);
+                    const to = ev.type === 'pointercancel' ? from : d.to;
+
+                    // 入る場所までスッと動かしてから、並びを確定する
+                    const settle = to > from ? rects[to].bottom - rects[from].bottom
+                                 : to < from ? rects[to].top - rects[from].top
+                                 : 0;
+                    els[from].style.transition = 'transform 180ms ease';
+                    els[from].style.transform = `translateY(${settle}px)`;
+
+                    setTimeout(() => {
+                        const order = [...ids];
+                        order.splice(from, 1);
+                        order.splice(to, 0, d.id);
+                        dragRef.current = null;
+                        // 並びの描き直しと、見た目の位置の片付けを同じタイミングでやる（ちらつかないように）
+                        ReactDOM.flushSync(() => {
+                            setDragId(null);
+                            if (to !== from) setDragOrder(order);
+                        });
+                        els.forEach(el => {
+                            el.style.transition = '';
+                            el.style.transform = '';
+                            el.style.zIndex = '';
+                            el.style.willChange = '';
+                        });
+                        if (to !== from) saveOrder(order);
+                    }, 180);
+                };
+
+                window.addEventListener('pointermove', onMove, { passive: false });
+                window.addEventListener('pointerup', finish);
+                window.addEventListener('pointercancel', finish);
             };
 
             const handleReload = () => {
@@ -758,6 +830,7 @@
             }
 
             const imagesBusy = isProcessingImages || isLoadingImages;
+            const dragDate = dragId ? (logs.find(l => l.id === dragId) || {}).date : null;
 
             return (
                 <div className="min-h-screen pb-24 max-w-md mx-auto bg-[#f7f3e8] shadow-2xl min-h-screen">
@@ -797,24 +870,25 @@
                                     key={log.id}
                                     id={`log-${log.id}`}
                                     onClick={() => { if (!dragId) openModal(log); }}
-                                    className={`bg-white p-4 rounded-lg shadow-sm border-l-4 border-[#c84b31] relative transition-shadow cursor-pointer scroll-mt-32
-                                        ${dragId === log.id ? 'shadow-xl ring-2 ring-[#c84b31]/40 z-10' : ''}
+                                    className={`bg-white p-4 rounded-lg border-l-4 border-[#c84b31] relative transition-[opacity,box-shadow] duration-200 cursor-pointer scroll-mt-32
+                                        ${dragId === log.id ? 'shadow-2xl' : 'shadow-sm'}
+                                        ${dragDate && log.date !== dragDate ? 'opacity-40' : ''}
                                     `}
                                 >
-                                    {countByDate.get(log.date) > 1 ? (
-                                        <button
-                                            type="button"
-                                            aria-label="ドラッグして並べ替え"
-                                            onPointerDown={(e) => handleGripDown(e, log)}
-                                            onPointerMove={handleGripMove}
-                                            onPointerUp={handleGripUp}
-                                            onPointerCancel={handleGripCancel}
-                                            onClick={(e) => e.stopPropagation()}
-                                            className={`drag-handle absolute top-0 right-0 h-full w-10 flex items-center justify-center cursor-grab ${dragId === log.id ? 'text-[#c84b31]' : 'text-gray-300'}`}
-                                        ><Icons.GripVertical size={20}/></button>
-                                    ) : (
-                                        <Icons.ChevronRight size={20} className="absolute top-1/2 -translate-y-1/2 right-3 text-gray-300"/>
-                                    )}
+                                    {/* 右端：上＝並べ替えのつまみ、下＝ゴミ箱 */}
+                                    <button
+                                        type="button"
+                                        aria-label="ドラッグして並べ替え"
+                                        onPointerDown={(e) => handleGripDown(e, log)}
+                                        onClick={(e) => e.stopPropagation()}
+                                        className={`drag-handle absolute top-0 right-0 bottom-10 w-10 flex items-center justify-center cursor-grab ${dragId === log.id ? 'text-[#c84b31]' : 'text-gray-300'}`}
+                                    ><Icons.GripVertical size={20}/></button>
+                                    <button
+                                        type="button"
+                                        aria-label="この記録を削除"
+                                        onClick={(e) => { e.stopPropagation(); handleDeleteCard(log); }}
+                                        className="absolute bottom-0 right-0 w-10 h-10 flex items-center justify-center text-gray-300 hover:text-red-600"
+                                    ><Icons.Trash2 size={18}/></button>
 
                                     <div className="text-xs text-gray-500 mb-2 font-mono flex items-center gap-2 pr-6">
                                         <span className="flex items-center gap-1"><Icons.Calendar size={12}/> {(log.date || '').replace(/-/g, '.')}</span>
