@@ -236,6 +236,60 @@
             .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ja'))
             .map(([name]) => name);
 
+        // --- 写真から復元した 2025年の記録（写真は入れていない。公開リポジトリのため） ---
+        // 設定の「2025年の記録を復元」から、まだ無いものだけ追加する（id が固定なので何度押しても重複しない）
+        const RESTORE_2025 = [
+            { id: "restore-2025-09-08-am", date: "2025-09-08", venue: "天満天神繁昌亭", createdAt: "2025-09-08T01:00:00.000Z",
+              lineup: [["桂弥太郎", "動物園"], ["桂弥っこ", "景清"], ["桂弥壱", "ふぐ鍋"], ["桂吉弥", "遊山船"]],
+              notes: "朝席「吉弥む〜ぶ ながつき」／写真から復元" },
+            { id: "restore-2025-11-26-am", date: "2025-11-26", venue: "天満天神繁昌亭", createdAt: "2025-11-26T01:00:00.000Z",
+              lineup: [["桂米舞", "動物園"], ["桂弥っこ", "犬の目"], ["由瓶", "阿弥陀池"], ["ビックリツカサ", "マジック"], ["松五", "餅屋問答"], ["枝鶴", "禁酒関所"], ["桂二葉", "味噌豆"], ["瓶吾", "はなうた"], ["旭堂南海・宮村群時", "書生節"], ["九雀", "はてなの茶碗"]],
+              notes: "昼席（米朝生誕百年記念月間）／写真から復元。ネタ帳の日付が「11/24か27」にも見えるので要確認" },
+            { id: "restore-2025-12-03-pm", date: "2025-12-03", venue: "天満天神繁昌亭", createdAt: "2025-12-03T09:00:00.000Z",
+              lineup: [["桂天吾", "四條畷のボクサー"], ["桂吉弥", "厄払い"], ["桂春蝶", "権助提灯"], ["桂かい枝", "幸助餅"]],
+              notes: "夜席「師走スペシャル！くしかつの会」オープニングトーク：吉弥・かい枝・春蝶／写真から復元。天吾の演目名は「畷」の読みが推測" },
+            { id: "restore-2025-12-08-am", date: "2025-12-08", venue: "島之内教会", createdAt: "2025-12-08T01:00:00.000Z",
+              lineup: [["桂弥っこ", ""], ["桂吉弥", ""]],
+              notes: "あさ席 「桂吉弥のお仕事です。Special in 島之内教会 2025」／写真から復元。演目の写真なし（出演は看板より）" },
+            { id: "restore-2025-12-08-pm", date: "2025-12-08", venue: "島之内教会", createdAt: "2025-12-08T09:00:00.000Z",
+              lineup: [["桂弥壱", "向う付け"], ["桂吉弥", "厄払い"], ["桂米輝", "田所萬吉 vs 黒づくめの男"], ["桂吉弥", "佐々木裁き"]],
+              notes: "よる席 「桂吉弥のお仕事です。Special in 島之内教会 2025」 オープニングトーク：弥壱・米輝・吉弥／写真から復元" },
+            { id: "restore-2025-12-09-am", date: "2025-12-09", venue: "島之内教会", createdAt: "2025-12-09T01:00:00.000Z",
+              lineup: [["桂米舞", "お花半七"], ["桂しん吉", "化物使い"]],
+              notes: "朝席 「桂吉弥のお仕事です。Special in 島之内教会 2025」／写真から復元" },
+            { id: "restore-2025-12-09-pm", date: "2025-12-09", venue: "島之内教会", createdAt: "2025-12-09T09:00:00.000Z",
+              lineup: [["桂米舞", "動物園"], ["桂吉弥", "軽業"], ["桂二葉", "蜆売り"], ["桂吉弥", "蛇含草"]],
+              notes: "夜席 「桂吉弥のお仕事です。Special in 島之内教会 2025」 オープニングトークあり／写真から復元" },
+            { id: "restore-2025-12-10-am", date: "2025-12-10", venue: "島之内教会", createdAt: "2025-12-10T01:00:00.000Z",
+              lineup: [["桂二豆", "狸の化寺"], ["桂吉弥", "愛宕山"]],
+              notes: "朝席 「桂吉弥のお仕事です。Special in 島之内教会 2025」 三味線：岡野鏡／写真から復元" },
+            { id: "restore-2025-12-10-pm", date: "2025-12-10", venue: "島之内教会", createdAt: "2025-12-10T09:00:00.000Z",
+              lineup: [["桂二豆", ""], ["桂雀太", ""], ["桂吉弥", ""]],
+              notes: "夜席 「桂吉弥のお仕事です。Special in 島之内教会 2025」／写真から復元。演目の写真なし（出演・順番は看板より）" },
+            { id: "restore-2025-12-11-am", date: "2025-12-11", venue: "島之内教会", createdAt: "2025-12-11T01:00:00.000Z",
+              lineup: [["桂天吾", "代脈"], ["桂弥太郎", "算段の平兵衛"]],
+              notes: "朝席 「桂吉弥のお仕事です。Special in 島之内教会 2025」／写真から復元" },
+            { id: "restore-2025-12-11-pm", date: "2025-12-11", venue: "島之内教会", createdAt: "2025-12-11T09:00:00.000Z",
+              lineup: [["桂天吾", "阿弥陀池"], ["桂吉弥", "隣の桜"], ["桂南光", "文七元結"], ["桂吉弥", "阿武松"]],
+              notes: "夜席 「桂吉弥のお仕事です。Special in 島之内教会 2025」 オープニングトーク：南光・吉弥／写真から復元" },
+            { id: "restore-2025-12-12-am", date: "2025-12-12", venue: "島之内教会", createdAt: "2025-12-12T01:00:00.000Z",
+              lineup: [["桂弥壱", "ふぐ鍋"], ["桂吉の丞", "ねずみ"]],
+              notes: "朝席 「桂吉弥のお仕事です。Special in 島之内教会 2025」／写真から復元" },
+            { id: "restore-2025-12-12-pm", date: "2025-12-12", venue: "島之内教会", createdAt: "2025-12-12T09:00:00.000Z",
+              lineup: [["桂弥っこ", ""], ["林家木久彦", ""], ["桂吉弥", ""]],
+              notes: "夜席 「桂吉弥のお仕事です。Special in 島之内教会 2025」／写真から復元。演目の写真なし（出演・順番は看板より。「木久彦」の字は推測）" },
+            { id: "restore-2025-12-13-am", date: "2025-12-13", venue: "島之内教会", createdAt: "2025-12-13T01:00:00.000Z",
+              lineup: [["桂九ノ一", "池田の猪買い"], ["桂吉の丞", "転宅"]],
+              notes: "朝席 「桂吉弥のお仕事です。Special in 島之内教会 2025」／写真から復元" },
+            { id: "restore-2025-12-13-pm", date: "2025-12-13", venue: "島之内教会", createdAt: "2025-12-13T09:00:00.000Z",
+              lineup: [["桂弥太郎", "寿限無"], ["桂吉弥", "七段目"], ["桂佐ん吉", "雉子政談"], ["桂吉弥", "夢の革財布"]],
+              notes: "夜席 「桂吉弥のお仕事です。Special in 島之内教会 2025」 オープニングトーク：全員＋吉の丞／写真から復元" },
+        ].map(r => {
+            const lineup = r.lineup.map(([performer, story]) => ({ performer, story }));
+            const last = lineup[lineup.length - 1];
+            return { ...r, lineup, performer: last.performer, story: last.story, images: [] };
+        });
+
         // 打った文字を含む過去の入力を、欄のすぐ下に出す（タップで確定）
         function SuggestInput({ value, onChange, candidates, placeholder, className, icon: ItemIcon }) {
             const [open, setOpen] = useState(false);
@@ -655,6 +709,16 @@
                 }
             };
 
+            const restoreMissing = RESTORE_2025.filter(r => !logs.some(l => l.id === r.id));
+
+            const handleRestore2025 = () => {
+                if (restoreMissing.length === 0) return;
+                if (!confirm(`写真から復元した2025年の記録を${restoreMissing.length}件追加します。よろしいですか？\n（写真は付きません）`)) return;
+                restoreMissing.forEach(r => saveLog(uid, r).catch(reportWriteError));
+                alert(`${restoreMissing.length}件を追加しました`);
+                setIsSettingsOpen(false);
+            };
+
             const handleLogout = () => {
                 if (confirm('ログアウトしますか？\n（記録はクラウドに残ります）')) auth.signOut();
             };
@@ -905,6 +969,9 @@
                                     <button onClick={handleExport} className="w-full py-3 rounded border border-gray-300 font-bold text-[#2d4059] flex items-center justify-center gap-2"><Icons.Download size={18}/> バックアップを書き出す</button>
                                     <button onClick={() => importInputRef.current.click()} className="w-full py-3 rounded border border-gray-300 font-bold text-[#2d4059] flex items-center justify-center gap-2"><Icons.Upload size={18}/> バックアップから読み込む</button>
                                     <input type="file" ref={importInputRef} onChange={handleImport} accept=".json,application/json" className="hidden" />
+                                    {restoreMissing.length > 0 && (
+                                        <button onClick={handleRestore2025} className="w-full py-3 rounded border border-gray-300 font-bold text-[#2d4059] flex items-center justify-center gap-2"><Icons.RefreshCw size={18}/> 2025年の記録を復元（{restoreMissing.length}件）</button>
+                                    )}
                                     <button onClick={handleLogout} className="w-full py-2 text-sm text-gray-400 flex items-center justify-center gap-2"><Icons.LogOut size={16}/> ログアウト（{user.email}）</button>
                                 </div>
                             </div>
