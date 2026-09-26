@@ -839,7 +839,15 @@
                             <div className="bg-white w-full max-w-sm rounded-xl shadow-2xl overflow-hidden">
                                 <div className="bg-[#2d4059] text-white p-4 flex justify-between items-center"><h2 className="font-bold flex gap-2 items-center"><Icons.Calendar size={18}/> 鑑賞カレンダー</h2><button onClick={() => setIsCalendarOpen(false)}><Icons.X size={20}/></button></div>
                                 <div className="p-4">
-                                    <div className="flex justify-between items-center mb-4"><button onClick={()=>{setCalendarEmptyDate(null);setCalendarViewDate(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth()-1, 1))}} className="p-2 bg-gray-100 rounded-full"><Icons.ChevronLeft/></button><span className="font-bold text-lg">{calendarViewDate.getFullYear()}年 {calendarViewDate.getMonth()+1}月</span><button onClick={()=>{setCalendarEmptyDate(null);setCalendarViewDate(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth()+1, 1))}} className="p-2 bg-gray-100 rounded-full"><Icons.ChevronRight/></button></div>
+                                    <div className="flex justify-between items-center mb-4"><button onClick={()=>{setCalendarEmptyDate(null);setCalendarViewDate(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth()-1, 1))}} className="p-2 bg-gray-100 rounded-full"><Icons.ChevronLeft/></button><span className="font-bold text-lg">{calendarViewDate.getFullYear()}年 {calendarViewDate.getMonth()+1}月{(() => {
+                                        // 過去の月だけ、その月に何席行ったかを表示（今月はヘッダーに出ているので出さない）
+                                        const now = new Date();
+                                        const isPastMonth = calendarViewDate.getFullYear() * 12 + calendarViewDate.getMonth() < now.getFullYear() * 12 + now.getMonth();
+                                        if (!isPastMonth) return null;
+                                        const prefix = `${calendarViewDate.getFullYear()}-${String(calendarViewDate.getMonth()+1).padStart(2,'0')}-`;
+                                        const count = logs.filter(l => (l.date || '').startsWith(prefix)).length;
+                                        return <span className="ml-2 text-sm text-[#c84b31]">{count}席</span>;
+                                    })()}</span><button onClick={()=>{setCalendarEmptyDate(null);setCalendarViewDate(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth()+1, 1))}} className="p-2 bg-gray-100 rounded-full"><Icons.ChevronRight/></button></div>
                                     <div className="grid grid-cols-7 text-center gap-1 mb-2 text-xs font-bold text-gray-400"><div>日</div><div>月</div><div>火</div><div>水</div><div>木</div><div>金</div><div>土</div></div>
                                     <div className="grid grid-cols-7 text-center gap-1">
                                         {[...Array(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth(), 1).getDay())].map((_,i)=><div key={`p${i}`}/>)}
