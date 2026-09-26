@@ -1,3 +1,5 @@
+
+Index · HTML
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -7,16 +9,21 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="落語鑑賞録">
     <title>落語鑑賞録</title>
-    
+ 
     <script src="https://cdn.tailwindcss.com"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
+ 
+    <!-- Firebase（クラウド保存） -->
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+ 
     <!-- スマホでのドラッグ＆ドロップ用ポリフィル -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/mobile-drag-drop@2.3.0-rc.2/default.css">
     <script src="https://cdn.jsdelivr.net/npm/mobile-drag-drop@2.3.0-rc.2/index.min.js"></script>
-    
+ 
     <style>
         body { font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif; -webkit-tap-highlight-color: transparent; }
         input, textarea { font-size: 16px !important; }
@@ -26,76 +33,99 @@
         /* ドラッグ中のスタイル調整 */
         .drag-target { border: 2px dashed #c84b31 !important; opacity: 0.5; }
         /* ドラッグ操作をスムーズにする */
-        .draggable-card { touch-action: pan-y; } 
+        .draggable-card { touch-action: pan-y; }
     </style>
 </head>
 <body class="bg-[#f7f3e8] text-[#2c2c2c] select-none">
     <div id="root"></div>
-
+ 
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
-
+ 
         // --- ドラッグ＆ドロップの初期化 ---
         try {
             MobileDragDrop.polyfill({
                 // スマホでスクロールとドラッグを区別するため、長押し(300ms)でドラッグ開始
-                holdToDrag: 300, 
+                holdToDrag: 300,
                 dragImageTranslateOverride: MobileDragDrop.scrollBehaviourDragImageTranslateOverride
             });
         } catch (e) { console.log('DnD polyfill error', e); }
-
-        // --- IndexedDB ヘルパー ---
+ 
+        // --- Firebase ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyDI4DD7UL9Pf3QVATYCzXD9eoffhIWQK2c",
+            authDomain: "rakugo-c5c68.firebaseapp.com",
+            projectId: "rakugo-c5c68",
+            storageBucket: "rakugo-c5c68.firebasestorage.app",
+            messagingSenderId: "175875332254",
+            appId: "1:175875332254:web:3c9a65c00e337df11e838f",
+        };
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        db.settings({ ignoreUndefinedProperties: true, merge: true });
+        // 電波がない場所でも記録できるように端末にキャッシュ（電波が戻ったら自動でクラウドへ）
+        db.enablePersistence({ synchronizeTabs: true }).catch(e => console.log('persistence', e.code));
+        try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
+ 
+        // データの置き場所: users/{uid}/logs/{id}（記録）, users/{uid}/images/{id}（写真）
+        const logsCol = (uid) => db.collection('users').doc(uid).collection('logs');
+        const imagesCol = (uid) => db.collection('users').doc(uid).collection('images');
+ 
+        const imagesOf = (log) => {
+            if (log.images && Array.isArray(log.images)) return log.images;
+            if (log.image) return [log.image];
+            return [];
+        };
+ 
+        // 記録と写真を別々のドキュメントに保存（一覧の表示を軽くするため）
+        // ※ オフラインだとサーバー応答を待つとずっと終わらないので、呼び出し側では await しない
+        const saveLog = (uid, log) => {
+            const { images, image, ...rest } = log;
+            const imgs = imagesOf(log);
+            const batch = db.batch();
+            batch.set(logsCol(uid).doc(String(log.id)), { ...rest, id: String(log.id), imageCount: imgs.length });
+            batch.set(imagesCol(uid).doc(String(log.id)), { images: imgs });
+            return batch.commit();
+        };
+ 
+        const deleteLog = (uid, id) => {
+            const batch = db.batch();
+            batch.delete(logsCol(uid).doc(id));
+            batch.delete(imagesCol(uid).doc(id));
+            return batch.commit();
+        };
+ 
+        const reportWriteError = (err) => {
+            console.error("クラウド保存失敗", err);
+            alert("クラウドへの保存に失敗しました。もう一度お試しください。");
+        };
+ 
+        // --- 旧データ（端末内 IndexedDB）読み取り: 移行用 ---
         const DB_NAME = 'RakugoAppDB';
         const STORE_NAME = 'logs';
-        const DB_VERSION = 1;
-
-        const initDB = () => {
-            return new Promise((resolve, reject) => {
-                const request = indexedDB.open(DB_NAME, DB_VERSION);
+        const dbGetAllLocal = () => new Promise((resolve) => {
+            try {
+                const request = indexedDB.open(DB_NAME, 1);
                 request.onupgradeneeded = (event) => {
-                    const db = event.target.result;
-                    if (!db.objectStoreNames.contains(STORE_NAME)) {
-                        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-                    }
+                    const idb = event.target.result;
+                    if (!idb.objectStoreNames.contains(STORE_NAME)) idb.createObjectStore(STORE_NAME, { keyPath: 'id' });
                 };
-                request.onsuccess = (event) => resolve(event.target.result);
-                request.onerror = (event) => reject(event.target.error);
-            });
+                request.onsuccess = (event) => {
+                    const idb = event.target.result;
+                    const req = idb.transaction([STORE_NAME], 'readonly').objectStore(STORE_NAME).getAll();
+                    req.onsuccess = () => resolve(req.result || []);
+                    req.onerror = () => resolve([]);
+                };
+                request.onerror = () => resolve([]);
+            } catch (e) { resolve([]); }
+        });
+ 
+        const safeLocal = {
+            get: (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+            set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} },
         };
-
-        const dbGetAll = async () => {
-            const db = await initDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction([STORE_NAME], 'readonly');
-                const store = transaction.objectStore(STORE_NAME);
-                const request = store.getAll();
-                request.onsuccess = () => resolve(request.result);
-                request.onerror = () => reject(request.error);
-            });
-        };
-
-        const dbPut = async (log) => {
-            const db = await initDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction([STORE_NAME], 'readwrite');
-                const store = transaction.objectStore(STORE_NAME);
-                const request = store.put(log);
-                request.onsuccess = () => resolve(request.result);
-                request.onerror = () => reject(request.error);
-            });
-        };
-
-        const dbDelete = async (id) => {
-            const db = await initDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction([STORE_NAME], 'readwrite');
-                const store = transaction.objectStore(STORE_NAME);
-                const request = store.delete(id);
-                request.onsuccess = () => resolve();
-                request.onerror = () => reject(request.error);
-            });
-        };
-
+ 
         // --- アイコン ---
         const Icon = ({ path, size = 24, className = "" }) => (
             <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} dangerouslySetInnerHTML={{ __html: path }} />
@@ -119,8 +149,13 @@
             RefreshCw: (p) => <Icon {...p} path='<path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>' />,
             ArrowUpDown: (p) => <Icon {...p} path='<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/><path d="M12 2v20"/>' />,
             GripVertical: (p) => <Icon {...p} path='<circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/>' />,
+            Settings: (p) => <Icon {...p} path='<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>' />,
+            Download: (p) => <Icon {...p} path='<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>' />,
+            Upload: (p) => <Icon {...p} path='<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/>' />,
+            LogOut: (p) => <Icon {...p} path='<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/>' />,
+            Cloud: (p) => <Icon {...p} path='<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>' />,
         };
-
+ 
         // 画像圧縮関数
         const compressImage = (file) => {
             return new Promise((resolve, reject) => {
@@ -134,7 +169,7 @@
                         const MAX_HEIGHT = 600;
                         let width = img.width;
                         let height = img.height;
-
+ 
                         if (width > height) {
                             if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
                         } else {
@@ -145,12 +180,14 @@
                         ctx.drawImage(img, 0, 0, width, height);
                         resolve(canvas.toDataURL("image/jpeg", 0.5));
                     };
+                    img.onerror = reject;
                     img.src = e.target.result;
                 };
+                reader.onerror = reject;
                 reader.readAsDataURL(file);
             });
         };
-
+ 
         // ソート関数: 日付降順 -> 作成日時降順
         const sortLogs = (logs) => {
             return logs.sort((a, b) => {
@@ -159,53 +196,123 @@
                 return new Date(b.createdAt) - new Date(a.createdAt);
             });
         };
-
+ 
+        // --- ログイン画面 ---
+        function LoginScreen() {
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [error, setError] = useState('');
+            const [busy, setBusy] = useState(false);
+ 
+            const handleLogin = async (e) => {
+                e.preventDefault();
+                setError('');
+                setBusy(true);
+                try {
+                    await auth.signInWithEmailAndPassword(email.trim(), password);
+                } catch (err) {
+                    console.error(err);
+                    if (err.code === 'auth/network-request-failed') setError('通信できませんでした。電波の良い場所でもう一度お試しください。');
+                    else if (err.code === 'auth/too-many-requests') setError('しばらく時間をおいてからお試しください。');
+                    else setError('メールアドレスかパスワードが違います。');
+                } finally {
+                    setBusy(false);
+                }
+            };
+ 
+            return (
+                <div className="min-h-screen max-w-md mx-auto bg-[#f7f3e8] flex flex-col">
+                    <header className="bg-[#2d4059] text-white p-4 shadow-md">
+                        <h1 className="text-xl font-bold font-serif flex items-center gap-2">
+                            <span className="bg-red-600 px-2 py-0.5 text-sm rounded-sm">寄席</span> 落語鑑賞録
+                        </h1>
+                    </header>
+                    <form onSubmit={handleLogin} className="p-6 space-y-4 mt-8">
+                        <div className="text-center mb-6">
+                            <div className="text-5xl mb-3">🎭</div>
+                            <p className="font-bold text-[#2d4059]">ログイン</p>
+                            <p className="text-xs text-gray-500 mt-1">一度ログインすれば、次からは不要です</p>
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold text-gray-500 block mb-1">メールアドレス</label>
+                            <input type="email" autoComplete="username" required value={email} onChange={e=>setEmail(e.target.value)} className="w-full h-11 p-2 rounded border border-gray-300 bg-white"/>
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold text-gray-500 block mb-1">パスワード</label>
+                            <input type="password" autoComplete="current-password" required value={password} onChange={e=>setPassword(e.target.value)} className="w-full h-11 p-2 rounded border border-gray-300 bg-white"/>
+                        </div>
+                        {error && <p className="text-sm text-red-600 font-bold">{error}</p>}
+                        <button type="submit" disabled={busy} className="w-full bg-[#2d4059] text-white font-bold py-3 rounded flex justify-center gap-2 items-center">
+                            {busy ? <div className="spinner"></div> : 'ログイン'}
+                        </button>
+                    </form>
+                </div>
+            );
+        }
+ 
         // --- アプリ本体 ---
-        function RakugoApp() {
+        function RakugoApp({ user }) {
+            const uid = user.uid;
             const [logs, setLogs] = useState([]);
             const [isLoaded, setIsLoaded] = useState(false);
-            
+ 
             const [isModalOpen, setIsModalOpen] = useState(false);
             const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+            const [isSettingsOpen, setIsSettingsOpen] = useState(false);
             const [viewImage, setViewImage] = useState(null);
             const [calendarViewDate, setCalendarViewDate] = useState(new Date());
             const [editingLog, setEditingLog] = useState(null);
             const [isProcessingImages, setIsProcessingImages] = useState(false);
-            
+            const [isLoadingImages, setIsLoadingImages] = useState(false);
+ 
             // ドラッグ中のアイテムID
             const [draggedId, setDraggedId] = useState(null);
             const [dragOverId, setDragOverId] = useState(null);
-
+ 
             // 入力フォーム
             const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
             const [venue, setVenue] = useState('');
             const [lineup, setLineup] = useState([{ performer: '', story: '' }]);
             const [notes, setNotes] = useState('');
-            const [images, setImages] = useState([]); 
-            
+            const [images, setImages] = useState([]);
+ 
             const fileInputRef = useRef(null);
-
-            // 初期化
+            const importInputRef = useRef(null);
+            const openingIdRef = useRef(null);
+ 
+            // クラウドの記録をリアルタイムで読み込み（オフライン時は端末のキャッシュから）
             useEffect(() => {
-                const loadData = async () => {
+                const unsub = logsCol(uid).onSnapshot(
+                    (snap) => {
+                        setLogs(sortLogs(snap.docs.map(d => ({ ...d.data(), id: d.id }))));
+                        setIsLoaded(true);
+                    },
+                    (err) => {
+                        console.error("読み込み失敗", err);
+                        setIsLoaded(true);
+                        alert("記録の読み込みに失敗しました。再読み込みしてください。");
+                    }
+                );
+                return unsub;
+            }, [uid]);
+ 
+            // この端末に以前の記録が残っていれば、最初の一回だけクラウドへ移す
+            useEffect(() => {
+                const flag = `rakugo_migrated_${uid}`;
+                if (safeLocal.get(flag)) return;
+                (async () => {
+                    const byId = new Map();
                     try {
-                        const oldData = localStorage.getItem('rakugo_logs');
-                        if (oldData) {
-                            try {
-                                const parsed = JSON.parse(oldData);
-                                for (const item of parsed) {
-                                    await dbPut(item);
-                                }
-                                localStorage.removeItem('rakugo_logs');
-                            } catch (e) { console.error("Migration failed", e); }
-                        }
-                        const allLogs = await dbGetAll();
-                        setLogs(sortLogs(allLogs));
-                    } catch (e) { console.error("DB Load failed", e); } finally { setIsLoaded(true); }
-                };
-                loadData();
-            }, []);
-
+                        const old = safeLocal.get('rakugo_logs');
+                        if (old) JSON.parse(old).forEach(l => l && l.id && byId.set(String(l.id), l));
+                    } catch (e) {}
+                    (await dbGetAllLocal()).forEach(l => l && l.id && byId.set(String(l.id), l));
+                    byId.forEach(l => saveLog(uid, l).catch(reportWriteError));
+                    safeLocal.set(flag, '1');
+                    if (byId.size > 0) alert(`この端末に残っていた${byId.size}件の記録をクラウドに移しました`);
+                })();
+            }, [uid]);
+ 
             const uniquePerformers = useMemo(() => {
                 const names = new Set();
                 logs.forEach(log => {
@@ -214,25 +321,25 @@
                 });
                 return Array.from(names).sort();
             }, [logs]);
-
+ 
             const uniqueVenues = useMemo(() => {
                 const venues = new Set();
                 logs.forEach(log => { if(log.venue) venues.add(log.venue); });
                 return Array.from(venues).sort();
             }, [logs]);
-
+ 
             const stats = useMemo(() => {
                 const now = new Date();
                 const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
                 const currentYear = today.getFullYear();
                 const currentMonth = today.getMonth();
                 const day = today.getDay();
-                const diff = day === 0 ? 6 : day - 1; 
+                const diff = day === 0 ? 6 : day - 1;
                 const startOfWeek = new Date(today);
                 startOfWeek.setDate(today.getDate() - diff);
                 const endOfWeek = new Date(startOfWeek);
                 endOfWeek.setDate(startOfWeek.getDate() + 7);
-
+ 
                 let week = 0, month = 0;
                 logs.forEach(log => {
                     if (!log.date) return;
@@ -243,51 +350,71 @@
                 });
                 return { week, month };
             }, [logs]);
-
+ 
             const openModal = (log = null) => {
                 if (log) {
                     setEditingLog(log);
                     setDate(log.date);
-                    setVenue(log.venue);
-                    setNotes(log.notes);
-                    let initialImages = [];
-                    if (log.images && Array.isArray(log.images)) {
-                        initialImages = log.images;
-                    } else if (log.image) {
-                        initialImages = [log.image];
+                    setVenue(log.venue || '');
+                    setNotes(log.notes || '');
+                    setLineup(log.lineup && log.lineup.length ? log.lineup.map(i => ({ ...i })) : [{ performer: log.performer || '', story: log.story || '' }]);
+                    setImages([]);
+                    openingIdRef.current = log.id;
+                    if (log.imageCount > 0) {
+                        // 写真は開いたときに読み込む
+                        setIsLoadingImages(true);
+                        imagesCol(uid).doc(log.id).get()
+                            .then(doc => {
+                                if (openingIdRef.current !== log.id) return;
+                                setImages((doc.exists && doc.data().images) || []);
+                            })
+                            .catch(err => {
+                                console.error("写真の読み込み失敗", err);
+                                alert("写真を読み込めませんでした。電波の良い場所で開き直してください。");
+                            })
+                            .finally(() => {
+                                if (openingIdRef.current === log.id) setIsLoadingImages(false);
+                            });
+                    } else {
+                        setIsLoadingImages(false);
                     }
-                    setImages(initialImages);
-                    setLineup(log.lineup && log.lineup.length ? log.lineup : [{ performer: log.performer || '', story: log.story || '' }]);
                 } else {
+                    openingIdRef.current = null;
                     setEditingLog(null);
                     setDate(new Date().toISOString().split('T')[0]);
                     setVenue('');
                     setLineup([{ performer: '', story: '' }]);
                     setNotes('');
                     setImages([]);
+                    setIsLoadingImages(false);
                 }
                 setIsModalOpen(true);
             };
-
+ 
+            const closeModal = () => {
+                openingIdRef.current = null;
+                setIsModalOpen(false);
+            };
+ 
             const handleImageSelect = async (e) => {
                 const files = Array.from(e.target.files);
                 if (files.length === 0) return;
-
+ 
                 const currentCount = images.length;
                 const remainingSlots = 3 - currentCount;
-
+ 
                 if (remainingSlots <= 0) {
                     alert("写真は既に3枚登録されています");
                     e.target.value = null;
                     return;
                 }
-
+ 
                 let targetFiles = files;
                 if (files.length > remainingSlots) {
                     alert(`写真は最大3枚までです。${remainingSlots}枚のみ追加されます。`);
                     targetFiles = files.slice(0, remainingSlots);
                 }
-
+ 
                 setIsProcessingImages(true);
                 try {
                     const compressedFiles = await Promise.all(
@@ -300,127 +427,142 @@
                 } finally {
                     setIsProcessingImages(false);
                 }
-                
-                e.target.value = null; 
+ 
+                e.target.value = null;
             };
-
+ 
             const handleRemoveImage = (index) => {
                 if(confirm("この写真を削除しますか？")) {
                     setImages(images.filter((_, i) => i !== index));
                 }
             };
-
-            const handleSave = async (e) => {
+ 
+            const handleSave = (e) => {
                 e.preventDefault();
-                setIsProcessingImages(true);
-                const cleanLineup = lineup.filter(i => i.performer.trim() || i.story.trim());
+                // 写真の読み込み中に保存すると写真が消えるので止める
+                if (isProcessingImages || isLoadingImages) return;
+                const cleanLineup = lineup.filter(i => (i.performer || '').trim() || (i.story || '').trim());
                 const finalLineup = cleanLineup.length ? cleanLineup : [{performer:'', story:''}];
-                
+ 
                 const newLog = {
                     id: editingLog ? editingLog.id : Date.now().toString(),
                     date,
                     venue,
                     lineup: finalLineup,
-                    performer: finalLineup[finalLineup.length-1].performer, 
+                    performer: finalLineup[finalLineup.length-1].performer,
                     story: finalLineup[finalLineup.length-1].story,
                     notes,
-                    images: images, 
-                    image: images[0] || null, 
+                    images: images,
                     createdAt: editingLog ? editingLog.createdAt : new Date().toISOString()
                 };
-
-                try {
-                    await dbPut(newLog);
-                    setLogs(prev => {
-                        const next = editingLog ? prev.map(l => l.id === newLog.id ? newLog : l) : [newLog, ...prev];
-                        return sortLogs(next);
-                    });
-                    setIsModalOpen(false);
-                } catch (err) {
-                    console.error("保存失敗", err);
-                    alert("保存に失敗しました。容量不足の可能性があります。");
-                } finally {
-                    setIsProcessingImages(false);
-                }
+ 
+                // 画面にはすぐ反映。電波がなくても端末に貯めておき、つながったら自動でクラウドへ送られる
+                saveLog(uid, newLog).catch(reportWriteError);
+                closeModal();
             };
-
-            const handleDelete = async (id, e) => {
+ 
+            const handleDelete = (id, e) => {
                 e.stopPropagation();
                 if(confirm('削除しますか？')) {
-                    try {
-                        await dbDelete(id);
-                        setLogs(prev => prev.filter(l => l.id !== id));
-                    } catch(err) {
+                    deleteLog(uid, id).catch(err => {
                         console.error("削除失敗", err);
                         alert("削除に失敗しました");
-                    }
+                    });
                 }
             };
-
+ 
             // --- ドラッグ＆ドロップ処理 ---
             const handleDragStart = (e, log) => {
                 e.dataTransfer.effectAllowed = "move";
                 e.dataTransfer.setData("text/plain", log.id);
                 setDraggedId(log.id);
             };
-
+ 
             const handleDragOver = (e, log) => {
                 e.preventDefault();
                 if (draggedId && draggedId !== log.id && log.date === logs.find(l => l.id === draggedId)?.date) {
                     setDragOverId(log.id);
                 }
             };
-
+ 
             const handleDragLeave = () => {
                 setDragOverId(null);
             }
-
-            const handleDrop = async (e, targetLog) => {
+ 
+            const handleDrop = (e, targetLog) => {
                 e.preventDefault();
                 setDragOverId(null);
                 const draggedLog = logs.find(l => l.id === draggedId);
-                
+                setDraggedId(null);
+ 
                 if (!draggedLog || !targetLog || draggedLog.id === targetLog.id) return;
-                
-                if (draggedLog.date !== targetLog.date) {
-                    setDraggedId(null);
-                    return;
-                }
-
+                if (draggedLog.date !== targetLog.date) return;
+ 
                 // createdAt をスワップ
-                const logCreatedAt = draggedLog.createdAt;
-                const targetCreatedAt = targetLog.createdAt;
-
-                const updatedDragged = { ...draggedLog, createdAt: targetCreatedAt };
-                const updatedTarget = { ...targetLog, createdAt: logCreatedAt };
-
-                try {
-                    await dbPut(updatedDragged);
-                    await dbPut(updatedTarget);
-                    
-                    setLogs(prev => {
-                        const newLogs = prev.map(l => {
-                            if (l.id === draggedLog.id) return updatedDragged;
-                            if (l.id === targetLog.id) return updatedTarget;
-                            return l;
-                        });
-                        return sortLogs(newLogs);
-                    });
-                } catch (err) {
-                    console.error("Drop failed", err);
-                } finally {
-                    setDraggedId(null);
-                }
+                const batch = db.batch();
+                batch.update(logsCol(uid).doc(draggedLog.id), { createdAt: targetLog.createdAt });
+                batch.update(logsCol(uid).doc(targetLog.id), { createdAt: draggedLog.createdAt });
+                batch.commit().catch(err => console.error("Drop failed", err));
             };
-
+ 
             const handleReload = () => {
                 window.location.reload();
             };
-
+ 
+            // --- バックアップ ---
+            const handleExport = async () => {
+                try {
+                    const snap = await imagesCol(uid).get();
+                    const imgMap = {};
+                    snap.forEach(d => { imgMap[d.id] = d.data().images || []; });
+                    const full = logs.map(l => {
+                        const { imageCount, ...rest } = l;
+                        const imgs = imgMap[l.id] || [];
+                        return { ...rest, images: imgs, image: imgs[0] || null };
+                    });
+                    const blob = new Blob([JSON.stringify(full)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `rakugo-backup-${new Date().toISOString().slice(0, 10)}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    setTimeout(() => URL.revokeObjectURL(url), 1000);
+                } catch (err) {
+                    console.error("書き出し失敗", err);
+                    alert("書き出しに失敗しました");
+                }
+            };
+ 
+            const handleImport = async (e) => {
+                const file = e.target.files[0];
+                e.target.value = null;
+                if (!file) return;
+                try {
+                    const data = JSON.parse(await file.text());
+                    if (!Array.isArray(data)) throw new Error('形式が違います');
+                    const valid = data.filter(l => l && l.id && l.date);
+                    if (!confirm(`${valid.length}件の記録を読み込みます。同じ記録は上書きされます。よろしいですか？`)) return;
+                    valid.forEach(l => saveLog(uid, l).catch(reportWriteError));
+                    alert(`${valid.length}件を読み込みました`);
+                    setIsSettingsOpen(false);
+                } catch (err) {
+                    console.error("読み込み失敗", err);
+                    alert("読み込みに失敗しました。バックアップファイルを選んでください。");
+                }
+            };
+ 
+            const handleLogout = () => {
+                if (confirm('ログアウトしますか？\n（記録はクラウドに残ります）')) auth.signOut();
+            };
+ 
             if (!isLoaded) {
                 return <div className="min-h-screen bg-[#f7f3e8] flex items-center justify-center text-[#2c2c2c] flex-col gap-2"><div className="spinner"></div><div className="text-sm font-bold">読み込み中...</div></div>;
             }
-
+ 
+            const imagesBusy = isProcessingImages || isLoadingImages;
+ 
             return (
                 <div className="min-h-screen pb-24 max-w-md mx-auto bg-[#f7f3e8] shadow-2xl min-h-screen">
                     <header className="bg-[#2d4059] text-white p-4 sticky top-0 z-10 shadow-md">
@@ -431,6 +573,7 @@
                             <div className="flex gap-3 items-center">
                                 <div className="text-sm font-bold text-[#eecda3] flex items-center gap-1"><Icons.BookOpen size={14}/> {logs.length}席</div>
                                 <button onClick={handleReload} className="text-white/70 hover:text-white" title="更新"><Icons.RefreshCw size={20}/></button>
+                                <button onClick={() => setIsSettingsOpen(true)} className="text-white/70 hover:text-white" title="設定"><Icons.Settings size={20}/></button>
                             </div>
                         </div>
                         <div className="flex gap-3 text-xs">
@@ -444,7 +587,7 @@
                             </button>
                         </div>
                     </header>
-
+ 
                     <main className="p-4 space-y-4">
                         {logs.length === 0 ? (
                             <div className="text-center py-20 opacity-50">
@@ -454,9 +597,9 @@
                             </div>
                         ) : (
                             logs.map((log) => (
-                                <div 
-                                    key={log.id} 
-                                    onClick={() => openModal(log)} 
+                                <div
+                                    key={log.id}
+                                    onClick={() => openModal(log)}
                                     className={`bg-white p-4 rounded-lg shadow-sm border-l-4 border-[#c84b31] relative transition-all draggable-card
                                         hover:shadow-md
                                         ${dragOverId === log.id ? 'drag-target' : ''}
@@ -469,12 +612,12 @@
                                     onDrop={(e) => handleDrop(e, log)}
                                 >
                                     <button onClick={(e) => handleDelete(log.id, e)} className="absolute top-2 right-2 p-2 text-red-500 hover:text-red-700 z-10"><Icons.Trash2 size={16}/></button>
-                                    
+ 
                                     <div className="text-xs text-gray-500 mb-2 font-mono flex items-center gap-2 pr-8">
-                                        <span className="flex items-center gap-1"><Icons.Calendar size={12}/> {log.date.replace(/-/g, '.')}</span>
+                                        <span className="flex items-center gap-1"><Icons.Calendar size={12}/> {(log.date || '').replace(/-/g, '.')}</span>
                                         <span className="text-gray-300">|</span>
                                         <span className="flex items-center gap-1"><Icons.MapPin size={12}/> {log.venue || '未定'}</span>
-                                        {(log.images?.length > 0 || log.image) && <span className="text-gray-400 ml-auto flex items-center gap-1"><Icons.Image size={14}/> {log.images?.length > 1 ? log.images.length : ''}</span>}
+                                        {log.imageCount > 0 && <span className="text-gray-400 ml-auto flex items-center gap-1"><Icons.Image size={14}/> {log.imageCount > 1 ? log.imageCount : ''}</span>}
                                     </div>
                                     <div className="space-y-2 mb-2">
                                         {(log.lineup && log.lineup.length ? log.lineup : [{performer: log.performer, story: log.story}]).map((item, idx) => (
@@ -489,15 +632,15 @@
                             ))
                         )}
                     </main>
-
+ 
                     <button onClick={() => openModal()} className="fixed bottom-6 right-6 bg-[#c84b31] text-white p-4 rounded-full shadow-lg hover:scale-105 transition-transform z-20"><Icons.Plus size={28}/></button>
-
+ 
                     {isModalOpen && (
                         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
                             <div className="bg-[#fcfaf5] w-full max-w-md rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
                                 <div className="bg-[#2d4059] text-white p-4 flex justify-between items-center">
                                     <h2 className="font-bold flex gap-2 items-center">{editingLog ? <Icons.Edit2 size={18}/> : <Icons.BookOpen size={18}/>} {editingLog ? '編集' : '新規記録'}</h2>
-                                    <button onClick={() => setIsModalOpen(false)}><Icons.X size={20}/></button>
+                                    <button onClick={closeModal}><Icons.X size={20}/></button>
                                 </div>
                                 <form onSubmit={handleSave} className="p-4 overflow-y-auto flex-1 space-y-4">
                                     <div className="grid grid-cols-2 gap-4">
@@ -514,8 +657,8 @@
                                         {lineup.map((item, idx) => (
                                             <div key={idx} className="flex gap-2 bg-white p-2 rounded border border-gray-200">
                                                 <div className="flex-1 space-y-2">
-                                                    <input placeholder="演目 (芝浜)" value={item.story} onChange={e=>{const n=[...lineup];n[idx].story=e.target.value;setLineup(n)}} className="w-full p-1 border-b font-bold"/>
-                                                    <input placeholder="演者" list="performers" value={item.performer} onChange={e=>{const n=[...lineup];n[idx].performer=e.target.value;setLineup(n)}} className="w-full p-1 text-sm"/>
+                                                    <input placeholder="演目 (芝浜)" value={item.story} onChange={e=>{const n=[...lineup];n[idx]={...n[idx],story:e.target.value};setLineup(n)}} className="w-full p-1 border-b font-bold"/>
+                                                    <input placeholder="演者" list="performers" value={item.performer} onChange={e=>{const n=[...lineup];n[idx]={...n[idx],performer:e.target.value};setLineup(n)}} className="w-full p-1 text-sm"/>
                                                 </div>
                                                 {lineup.length>1 && <button type="button" onClick={()=>{setLineup(lineup.filter((_,i)=>i!==idx))}} className="text-gray-300"><Icons.MinusCircle/></button>}
                                             </div>
@@ -526,6 +669,9 @@
                                     <div>
                                         <label className="text-xs font-bold text-gray-500 block mb-1">写真 (最大3枚)</label>
                                         <div className="space-y-2">
+                                            {isLoadingImages && (
+                                                <div className="h-12 flex items-center justify-center gap-2 text-gray-400 text-sm"><div className="spinner"></div> 写真を読み込み中...</div>
+                                            )}
                                             {images.length > 0 && (
                                                 <div className="grid grid-cols-3 gap-2 mb-2">
                                                     {images.map((img, idx) => (
@@ -536,7 +682,7 @@
                                                     ))}
                                                 </div>
                                             )}
-                                            {images.length < 3 && (
+                                            {!isLoadingImages && images.length < 3 && (
                                                 <button type="button" onClick={() => fileInputRef.current.click()} disabled={isProcessingImages} className="w-full h-12 border-2 border-dashed border-gray-300 rounded flex items-center justify-center gap-2 text-gray-400 hover:bg-gray-50 text-sm">
                                                     {isProcessingImages ? <div className="spinner"></div> : <Icons.Camera size={18} />}
                                                     <span>{isProcessingImages ? '処理中...' : `写真を追加 ${images.length > 0 ? `(${images.length}/3)` : ''}`}</span>
@@ -547,7 +693,7 @@
                                     </div>
                                 </form>
                                 <div className="p-4 bg-gray-50 border-t">
-                                    <button onClick={handleSave} disabled={isProcessingImages} className="w-full bg-[#2d4059] text-white font-bold py-3 rounded flex justify-center gap-2 items-center"><Icons.Save size={18}/> 保存</button>
+                                    <button onClick={handleSave} disabled={imagesBusy} className={`w-full bg-[#2d4059] text-white font-bold py-3 rounded flex justify-center gap-2 items-center ${imagesBusy ? 'opacity-50' : ''}`}><Icons.Save size={18}/> 保存</button>
                                 </div>
                             </div>
                         </div>
@@ -557,7 +703,7 @@
                             <div className="bg-white w-full max-w-sm rounded-xl shadow-2xl overflow-hidden">
                                 <div className="bg-[#2d4059] text-white p-4 flex justify-between items-center"><h2 className="font-bold flex gap-2 items-center"><Icons.Calendar size={18}/> 鑑賞カレンダー</h2><button onClick={() => setIsCalendarOpen(false)}><Icons.X size={20}/></button></div>
                                 <div className="p-4">
-                                    <div className="flex justify-between items-center mb-4"><button onClick={()=>setCalendarViewDate(new Date(calendarViewDate.setMonth(calendarViewDate.getMonth()-1)))} className="p-2 bg-gray-100 rounded-full"><Icons.ChevronLeft/></button><span className="font-bold text-lg">{calendarViewDate.getFullYear()}年 {calendarViewDate.getMonth()+1}月</span><button onClick={()=>setCalendarViewDate(new Date(calendarViewDate.setMonth(calendarViewDate.getMonth()+1)))} className="p-2 bg-gray-100 rounded-full"><Icons.ChevronRight/></button></div>
+                                    <div className="flex justify-between items-center mb-4"><button onClick={()=>setCalendarViewDate(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth()-1, 1))} className="p-2 bg-gray-100 rounded-full"><Icons.ChevronLeft/></button><span className="font-bold text-lg">{calendarViewDate.getFullYear()}年 {calendarViewDate.getMonth()+1}月</span><button onClick={()=>setCalendarViewDate(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth()+1, 1))} className="p-2 bg-gray-100 rounded-full"><Icons.ChevronRight/></button></div>
                                     <div className="grid grid-cols-7 text-center gap-1 mb-2 text-xs font-bold text-gray-400"><div>日</div><div>月</div><div>火</div><div>水</div><div>木</div><div>金</div><div>土</div></div>
                                     <div className="grid grid-cols-7 text-center gap-1">{[...Array(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth(), 1).getDay())].map((_,i)=><div key={`p${i}`}/>)}{[...Array(new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth()+1, 0).getDate())].map((_,i)=>{const d=i+1,y=calendarViewDate.getFullYear(),m=calendarViewDate.getMonth()+1,isToday=new Date().toDateString()===new Date(y,m-1,d).toDateString(),logCount=logs.filter(l=>l.date===`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`).length;return(
                                         <div key={d} className={`h-10 w-10 relative flex flex-col items-center justify-center rounded-full ${isToday?'bg-[#2d4059] text-white':'hover:bg-gray-100'}`}>
@@ -578,7 +724,22 @@
                             </div>
                         </div>
                     )}
-
+ 
+                    {isSettingsOpen && (
+                        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setIsSettingsOpen(false)}>
+                            <div className="bg-white w-full max-w-sm rounded-xl shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+                                <div className="bg-[#2d4059] text-white p-4 flex justify-between items-center"><h2 className="font-bold flex gap-2 items-center"><Icons.Settings size={18}/> 設定</h2><button onClick={() => setIsSettingsOpen(false)}><Icons.X size={20}/></button></div>
+                                <div className="p-4 space-y-3">
+                                    <div className="text-xs text-gray-500 flex items-center gap-1"><Icons.Cloud size={14}/> 記録はクラウドに自動保存されています</div>
+                                    <button onClick={handleExport} className="w-full py-3 rounded border border-gray-300 font-bold text-[#2d4059] flex items-center justify-center gap-2"><Icons.Download size={18}/> バックアップを書き出す</button>
+                                    <button onClick={() => importInputRef.current.click()} className="w-full py-3 rounded border border-gray-300 font-bold text-[#2d4059] flex items-center justify-center gap-2"><Icons.Upload size={18}/> バックアップから読み込む</button>
+                                    <input type="file" ref={importInputRef} onChange={handleImport} accept=".json,application/json" className="hidden" />
+                                    <button onClick={handleLogout} className="w-full py-2 text-sm text-gray-400 flex items-center justify-center gap-2"><Icons.LogOut size={16}/> ログアウト（{user.email}）</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+ 
                     {viewImage && (
                         <div className="fixed inset-0 bg-black/90 z-[60] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setViewImage(null)}>
                             <button className="absolute top-4 right-4 text-white/70 hover:text-white p-2"><Icons.X size={32} /></button>
@@ -588,8 +749,21 @@
                 </div>
             );
         }
+ 
+        // --- ログイン状態で画面を切り替え ---
+        function Root() {
+            const [user, setUser] = useState(undefined); // undefined = 確認中
+            useEffect(() => auth.onAuthStateChanged(u => setUser(u || null)), []);
+ 
+            if (user === undefined) {
+                return <div className="min-h-screen bg-[#f7f3e8] flex items-center justify-center text-[#2c2c2c] flex-col gap-2"><div className="spinner"></div><div className="text-sm font-bold">読み込み中...</div></div>;
+            }
+            if (!user) return <LoginScreen />;
+            return <RakugoApp key={user.uid} user={user} />;
+        }
+ 
         const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<RakugoApp />);
+        root.render(<Root />);
     </script>
 </body>
 </html>
