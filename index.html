@@ -336,7 +336,6 @@
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
             const [viewImage, setViewImage] = useState(null);
             const [calendarEmptyDate, setCalendarEmptyDate] = useState(null); // 記録のない日を押したとき
-            const [highlightDate, setHighlightDate] = useState(null);         // 飛んだ先の日を一瞬光らせる
             const [pendingScrollDate, setPendingScrollDate] = useState(null); // この日の記録までスクロールしたい
             const [calendarViewDate, setCalendarViewDate] = useState(new Date());
             const [editingLog, setEditingLog] = useState(null);
@@ -438,10 +437,7 @@
                 const el = document.getElementById(`log-${first.id}`);
                 if (!el) return;
                 el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                setHighlightDate(pendingScrollDate);
                 setPendingScrollDate(null);
-                const t = setTimeout(() => setHighlightDate(null), 2000);
-                return () => clearTimeout(t);
             }, [pendingScrollDate, logs]);
 
             const toDateStr = (y, m, d) => `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
@@ -707,9 +703,8 @@
                                     key={log.id}
                                     id={`log-${log.id}`}
                                     onClick={() => openModal(log)}
-                                    className={`bg-white p-4 rounded-lg shadow-sm border-l-4 border-[#c84b31] relative transition-all duration-500 draggable-card cursor-pointer active:bg-gray-50 scroll-mt-32
+                                    className={`bg-white p-4 rounded-lg shadow-sm border-l-4 border-[#c84b31] relative transition-all draggable-card cursor-pointer active:bg-gray-50 scroll-mt-32
                                         hover:shadow-md
-                                        ${highlightDate === log.date ? 'ring-4 ring-[#eecda3] bg-[#fff8e8]' : ''}
                                         ${dragOverId === log.id ? 'drag-target' : ''}
                                         ${draggedId === log.id ? 'opacity-30' : ''}
                                     `}
